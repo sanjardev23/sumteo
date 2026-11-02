@@ -1,9 +1,12 @@
 """Day 1 — video input: file, webcam index or RTSP URL."""
 from __future__ import annotations
 
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 
+import cv2
 import numpy as np
 
 
@@ -16,9 +19,53 @@ class Frame:
 
 class VideoSource:
     def __init__(self, source: str | int, target_fps: float | None = None):
+        if isinstance(source, str) and source.isdigit():
+            source = int(source)            # "0" on the command line = webcam 0
         self.source = source
         self.target_fps = target_fps
+        self.is_file = isinstance(source, str) and Path(source).is_file()
+        self.fps: float = 0.0               # native fps, known once frames() opens the source
 
     def frames(self) -> Iterator[Frame]:
-        # TODO(Day 1): cv2.VideoCapture, skip frames to match target_fps, release on exit
-        raise NotImplementedError("Day 1")
+        cap = cv2.VideoCapture(self.source)
+        if not cap.isOpened():
+            raise RuntimeError(f"cannot open video source: {self.source!r}")
+        self.fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        try:
+            if self.is_file:
+                yield from self._file_frames(cap)
+            else:
+                yield from self._live_frames(cap)
+        finally:
+            cap.release()
+
+    def _file_frames(self, cap: cv2.VideoCapture) -> Iterator[Frame]:
+        # Keep frame i when it starts a new 1/target_fps slot; grab() skips without decoding.
+        keep_every = self.fps / self.target_fps if self.target_fps and self.target_fps < self.fps else 1.0
+        next_keep, index = 0.0, 0
+        while True:
+            if index + 1e-9 < next_keep:
+                if not cap.grab():
+                    return
+                index += 1
+                continue
+            ok, image = cap.read()
+            if not ok:
+                return
+            yield Frame(image=image, ts=index / self.fps, index=index)
+            next_keep += keep_every
+            index += 1
+
+    def _live_frames(self, cap: cv2.VideoCapture) -> Iterator[Frame]:
+        # Live feeds have no reproducible clock; use wall time and drop frames we can't keep up with.
+        min_gap = 1.0 / self.target_fps if self.target_fps else 0.0
+        start, last_ts, index = time.monotonic(), -1e9, 0
+        while True:
+            ok, image = cap.read()
+            if not ok:
+                return                      # TODO(Day 3): reconnect_attempts + CAMERA_HEALTH "lost"
+            ts = time.monotonic() - start
+            if ts - last_ts >= min_gap:
+                last_ts = ts
+                yield Frame(image=image, ts=ts, index=index)
+            index += 1
