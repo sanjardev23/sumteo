@@ -5,10 +5,10 @@ runtime:
   show_window: true
 
 models:
-  detector: yolo26n.pt
-  detector_imgsz: 640
-  detector_conf: 0.35
-  tracker: bytetrack.yaml
+  detector: models/yolo26n.pt
+  detector_imgsz: 1280   # people are small in high cameras; 640 misses most of them
+  detector_conf: 0.1     # low-score boxes feed ByteTrack matching; new IDs need new_track_thresh
+  tracker: configs/bytetrack.yaml
   density: models/dmcount_shb.pth
   density_every_n_frames: 15
   flow_every_n_frames: 2

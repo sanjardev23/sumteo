@@ -64,6 +64,12 @@ flowchart TD
 | `density.py` | DM-Count (pretrained on ShanghaiTech / NWPU) | density map + count | every N frames (≈1 fps) |
 | `flow.py` | OpenCV Farneback optical flow | mean speed, direction histogram, turbulence | every 2–3 frames |
 
+Detector settings live in config `models:` (`detector`, `detector_imgsz` 1280, `detector_conf` 0.1, `tracker`); tracker
+thresholds live in `configs/bytetrack.yaml` (high 0.2, low 0.05, new track 0.3, buffer 30 frames = `tracking.lost_after_s`
+at 15 fps, match 0.95). Why: in high, wide-angle shots people are small, so imgsz 640 finds almost nobody and stock
+ByteTrack churns IDs. The low `detector_conf` only feeds ByteTrack's second-stage matching; a new track still needs ≥ 0.3,
+so weak false boxes don't become tracks.
+
 **Why two counting methods?** Detection works well up to ~2–3 people/m². In dense crowds people
 are occluded and detection under-counts badly, so the density model takes over.
 `CrowdAnalyzer` uses `max(detection_count, density_count)` per zone, and trusts density above a switch threshold.
@@ -236,7 +242,7 @@ Camera workers and the API share state through SQLite + a small in-memory pub/su
 
 | Item | Target |
 |---|---|
-| Detection + tracking (YOLO26n, 640) | ≥ 20 FPS |
+| Detection + tracking (YOLO26n, 1280) | ≥ 15 FPS (measured 17–28 FPS on the Day 1 clips) |
 | Density model | ~1 run/s |
 | Alert latency (level change → dashboard) | < 3 s + debounce |
 

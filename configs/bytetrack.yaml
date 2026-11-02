@@ -1,0 +1,9 @@
+# ByteTrack settings for small, distant people in high fixed cameras (Ultralytics tracker format).
+# Tuned on Day 1: stock thresholds dropped most new tracks after 3–4 frames in the stock crowd clips.
+tracker_type: bytetrack
+track_high_thresh: 0.2   # first-stage match
+track_low_thresh: 0.05   # second-stage match keeps people whose score dips for a frame
+new_track_thresh: 0.3    # only confident boxes start a new ID
+track_buffer: 30         # frames a lost track is kept (30 ≈ 2 s at target_fps 15, like tracking.lost_after_s)
+match_thresh: 0.95       # max 1 - IoU cost; small boxes overlap little between frames
+fuse_score: true

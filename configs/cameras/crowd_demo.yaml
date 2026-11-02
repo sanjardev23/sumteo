@@ -1,6 +1,6 @@
 id: crowd-demo-1
-name: Festival street (demo)
-source: data/raw/crowd_01.mp4      # file path, webcam index (0) or rtsp:// URL
+name: Station square (demo)
+source: data/raw/crowd_02.mp4      # file path, webcam index (0) or rtsp:// URL
 
 calibration:                       # filled by scripts/calibrate.py
   image_points: []                 # 4 × [x, y] pixels
