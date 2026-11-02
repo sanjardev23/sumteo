@@ -1,0 +1,76 @@
+# Real defaults. Demo-only thresholds go in configs/cameras/*_demo.yaml under `overrides:`.
+runtime:
+  device: mps            # mps (Mac) | cuda | cpu
+  target_fps: 15         # frames are skipped to keep up in real time
+  show_window: true
+
+models:
+  detector: yolo11n.pt
+  detector_imgsz: 640
+  detector_conf: 0.35
+  tracker: bytetrack.yaml
+  density: models/dmcount_shb.pth
+  density_every_n_frames: 15
+  flow_every_n_frames: 2
+
+tracking:
+  lost_after_s: 2.0      # drop a track not seen for this long
+  speed_window_s: 1.0    # smoothing window for speed
+  still_speed_mps: 0.3   # below this a person counts as "standing still"
+
+crowd:
+  switch_density_ppm2: 2.5        # above this, trust the density model over detection
+  smoothing_s: 5                  # density = median over this window
+  levels_ppm2: {yellow: 2.0, orange: 4.0, red: 5.0}
+  hysteresis_ppm2: 0.4            # a level is left only when density drops this far below its threshold
+  turbulence_red: 0.6             # orange + turbulence above this => red
+  risk_factors: {slope: 0.85, narrow: 0.9, bottleneck: 0.9}   # multiply a zone's level thresholds
+  risk_factor_floor: 0.7          # combined factor never goes below this
+  stagnation_min_level: YELLOW
+  stagnation_speed_mps: 0.2       # median walking speed below this = stuck
+  stagnation_seconds: 30
+  rise_window_s: 60
+  rise_ppm2_per_min: 1.0          # density growing faster than this = DENSITY_RISING
+  rise_min_density: 2.0
+  counter_flow_warn: 0.3
+  inflow_window_s: 60
+  inflow_ratio: 2.0               # inflow / outflow above this = INFLOW_IMBALANCE
+  inflow_min_per_min: 30          # ignore imbalance when very few people cross
+
+camera_health:
+  frozen_seconds: 5               # no pixel change this long = frozen feed
+  dark_mean_below: 15             # mean gray level (0–255) below this = dark / covered
+  reconnect_attempts: 3
+
+events:
+  debounce_s: 1.0
+  cooldown_s: 60
+  snapshot_dir: data/snapshots
+
+notifiers:
+  console: true
+  kakao: false                    # optional KakaoTalk push (token in .env)
+  routes:                         # who gets which severity; security / admin = dashboard roles
+    INFO: [console, admin]
+    WARNING: [console, security, admin]
+    CRITICAL: [console, security, admin, kakao]
+  ack_timeout_s: 60               # unacknowledged CRITICAL is re-sent to admin after this
+  dashboard_url: http://127.0.0.1:3000
+
+city_data:
+  enabled: false                  # Seoul real-time city data (needs SEOUL_API_KEY)
+  area: ""                        # hotspot name, e.g. 이태원 관광특구
+  poll_seconds: 300
+
+verify:
+  vlm_enabled: false     # Day 8, optional
+
+privacy:
+  blur_faces: true
+
+storage:
+  db_path: data/safety.db
+
+api:
+  host: 127.0.0.1
+  port: 8000

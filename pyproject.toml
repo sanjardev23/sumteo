@@ -1,0 +1,33 @@
+[project]
+name = "sumteo"
+version = "0.1.0"
+description = "Sumteo (숨터): AI crowd-safety early warning from video"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  "ultralytics>=8.3",
+  "torch",
+  "torchvision",
+  "opencv-python",
+  "numpy",
+  "pydantic>=2",
+  "pyyaml",
+  "fastapi",
+  "uvicorn[standard]",
+  "httpx",
+  "python-dotenv",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+vlm = ["anthropic"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,38 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Data, model weights, videos (large / licensed)
+data/*
+!data/.gitkeep
+models/*
+!models/.gitkeep
+*.pt
+*.pth
+*.onnx
+*.mp4
+*.avi
+*.mov
+*.db
+
+# Dashboard
+dashboard/node_modules/
+dashboard/.next/
+
+# Local-only planning: the daily plan and the daily journal stay on this machine
+docs/PLAN.md
+docs/journal/
+docs/**/day-*.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/

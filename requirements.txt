@@ -1,0 +1,13 @@
+# Mirror of pyproject.toml dependencies, for plain `pip install -r`
+ultralytics>=8.3
+torch
+torchvision
+opencv-python
+numpy
+pydantic>=2
+pyyaml
+fastapi
+uvicorn[standard]
+httpx
+python-dotenv
+pytest

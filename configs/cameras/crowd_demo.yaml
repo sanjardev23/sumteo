@@ -1,0 +1,18 @@
+id: crowd-demo-1
+name: Festival street (demo)
+source: data/raw/crowd_01.mp4      # file path, webcam index (0) or rtsp:// URL
+
+calibration:                       # filled by scripts/calibrate.py
+  image_points: []                 # 4 × [x, y] pixels
+  world_points: []                 # same 4 points × [x, y] meters
+
+zones:
+  - id: main
+    polygon: []                    # [[x, y], ...] pixels
+    risk: {slope: false, narrow: false, bottleneck: false}
+    entry_line: []                 # optional [[x1, y1], [x2, y2]] for inflow counting
+    exit_line: []
+
+overrides:                         # demo-only thresholds
+  crowd:
+    levels_ppm2: {yellow: 1.0, orange: 2.0, red: 3.0}
