@@ -1,4 +1,4 @@
-"""Day 1 — per-track history: speed (m/s), still time, time in zone."""
+"""Day 1 — per-track history: speed (m/s), still time, time per zone, line crossings."""
 from __future__ import annotations
 
 from collections import deque
@@ -16,8 +16,8 @@ class TrackState:
     last_seen: float = 0.0
     speed_mps: float = 0.0
     still_seconds: float = 0.0
-    seconds_in_zone: float = 0.0
-    last_side: dict = field(default_factory=dict)   # line id → last Line.side(), to detect crossings
+    seconds_in_zone: dict[str, float] = field(default_factory=dict)  # zone id → seconds inside it
+    last_side: dict[str, int] = field(default_factory=dict)          # line id ("<zone>:entry" / "<zone>:exit") → last Line.side()
 
 
 class TrackStore:
@@ -27,6 +27,7 @@ class TrackStore:
         self.still_speed_mps = still_speed_mps
         self.tracks: dict[int, TrackState] = {}
 
-    def update(self, ts: float, detections, homography, zone) -> None:
-        # TODO(Day 1): append positions, recompute speed over window, still/zone timers, drop lost tracks
+    def update(self, ts: float, detections, homography, zones: list) -> None:
+        # TODO(Day 1): append positions, recompute speed over window, still timer, per-zone timers,
+        #              entry/exit crossings per zone, drop lost tracks
         raise NotImplementedError("Day 1")

@@ -31,7 +31,7 @@ python scripts/run_camera.py --camera configs/cameras/crowd_demo.yaml
 configs/            default.yaml (real thresholds) + cameras/*.yaml (source, zones, calibration, demo overrides)
 src/sumteo/
   video/            VideoSource → Frame
-  perception/       detector (YOLO11+ByteTrack), density (DM-Count), optical flow
+  perception/       detector (YOLO26+ByteTrack), density (DM-Count), optical flow
   geometry/         zones, homography (pixels ↔ meters)
   analytics/        track state, CrowdAnalyzer
   events/           Event model, RuleEngine (debounce/cooldown/escalation), notifiers

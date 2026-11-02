@@ -18,7 +18,7 @@ pushing against itself. Those are the signals that turn a crowded street into a 
 flowchart TD
     A[Video source<br/>file / webcam / RTSP] --> B[Frame loop<br/>timestamp + resize]
     A --> HC[Camera health<br/>frozen / dark / lost]
-    B --> C[Person detection + tracking<br/>YOLO11 + ByteTrack]
+    B --> C[Person detection + tracking<br/>YOLO26 + ByteTrack]
     C --> D[Track state<br/>speed m/s, line crossings]
     B --> E1[Density model<br/>DM-Count, every N frames]
     B --> E2[Optical flow<br/>Farneback]
@@ -60,7 +60,7 @@ flowchart TD
 ### 2.2 Perception (`src/sumteo/perception/`)
 | Module | Model | Output | Frequency |
 |---|---|---|---|
-| `detector.py` | YOLO11n/s (person class only) + ByteTrack | `list[Detection(track_id, bbox, conf)]` | every frame |
+| `detector.py` | YOLO26n/s (person class only) + ByteTrack | `list[Detection(track_id, bbox, conf)]` | every frame |
 | `density.py` | DM-Count (pretrained on ShanghaiTech / NWPU) | density map + count | every N frames (≈1 fps) |
 | `flow.py` | OpenCV Farneback optical flow | mean speed, direction histogram, turbulence | every 2–3 frames |
 
@@ -93,8 +93,11 @@ each flag multiplies the zone's level thresholds by a factor from `crowd.risk_fa
 
 **`state.py` — TrackState** (per track ID)
 - ring buffer of `(ts, foot_point_px, foot_point_m)`
-- `speed_mps` (smoothed over last ~1 s), `still_seconds`, `seconds_in_zone`
-- line crossings (entry / exit) for inflow counting
+- `speed_mps` (smoothed over last ~1 s), `still_seconds`
+- `seconds_in_zone: dict[zone_id, seconds]` — a camera has several zones, so time is kept per zone
+- line crossings for inflow counting: `last_side` keyed by line id `"<zone>:entry"` / `"<zone>:exit"`;
+  a side change between frames = one crossing
+- `TrackStore.update(ts, detections, homography, zones)` takes all of the camera's zones
 
 **`crowd.py` — CrowdAnalyzer → `CrowdMetrics`** (per zone, per second)
 | Metric | How |
@@ -233,7 +236,7 @@ Camera workers and the API share state through SQLite + a small in-memory pub/su
 
 | Item | Target |
 |---|---|
-| Detection + tracking (YOLO11n, 640) | ≥ 20 FPS |
+| Detection + tracking (YOLO26n, 640) | ≥ 20 FPS |
 | Density model | ~1 run/s |
 | Alert latency (level change → dashboard) | < 3 s + debounce |
 
@@ -267,7 +270,7 @@ location-targeted disaster text messages, KakaoTalk AlimTalk business channel, s
 | Layer | Choice |
 |---|---|
 | Language | Python 3.12 (ML libraries lag behind the newest Python) |
-| CV / ML | OpenCV, PyTorch (MPS on Mac), Ultralytics (YOLO11, ByteTrack) |
+| CV / ML | OpenCV, PyTorch (MPS on Mac), Ultralytics (YOLO26, ByteTrack) |
 | Density | DM-Count (PyTorch, pretrained weights) |
 | Config | YAML + Pydantic |
 | API | FastAPI, uvicorn, WebSocket |

@@ -5,7 +5,7 @@ runtime:
   show_window: true
 
 models:
-  detector: yolo11n.pt
+  detector: yolo26n.pt
   detector_imgsz: 640
   detector_conf: 0.35
   tracker: bytetrack.yaml
@@ -63,7 +63,7 @@ city_data:
   poll_seconds: 300
 
 verify:
-  vlm_enabled: false     # Day 8, optional
+  vlm_enabled: false     # Day 6, optional
 
 privacy:
   blur_faces: true

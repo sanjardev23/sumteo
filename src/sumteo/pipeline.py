@@ -18,7 +18,7 @@ class Pipeline:
     def run(self) -> None:
         # for frame in source.frames():
         #     detections = tracker.update(frame.image)
-        #     tracks.update(frame.ts, detections, homography, zone)
+        #     tracks.update(frame.ts, detections, homography, zones)
         #     conditions = analyzer.update(...)
         #     for event in engine.process(frame.ts, conditions):
         #         snapshot → blur → (VLM if CRITICAL) → db → notifiers
