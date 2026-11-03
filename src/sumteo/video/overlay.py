@@ -1,4 +1,5 @@
-"""Days 1–2 — drawing on the video: boxes + speeds, zones in their level color, counting lines, heatmap, metrics panel.
+"""Days 1–3 — drawing on the video: boxes + speeds, zones in their level color, counting lines, heatmap, metrics panel;
+Day 3: flow arrows, rule badges, in / out counts, camera health.
 
 Hangul (관심 / 주의 / 경계 / 심각) can't be drawn by cv2.putText, so all text goes through one Pillow pass per frame.
 """
@@ -21,6 +22,9 @@ LEVEL_COLORS = {  # BGR
 }
 UNKNOWN_COLOR, LINE_COLOR, WHITE = (200, 200, 200), (255, 160, 0), (255, 255, 255)
 ZONE_FILL_ALPHA, HEATMAP_ALPHA = 0.25, 0.45
+FLOW_COLOR, FLOW_STEP_PX, FLOW_ARROW_S = (255, 255, 0), 24, 0.5   # arrow = where a point gets to in 0.5 s
+BADGES = {"STAGNATION": "정체 STUCK", "DENSITY_RISING": "급증 RISING", "COUNTER_FLOW": "역류 COUNTER-FLOW",
+          "INFLOW_IMBALANCE": "유입 INFLOW"}
 _FONTS = ["/System/Library/Fonts/AppleSDGothicNeo.ttc", "/System/Library/Fonts/Supplemental/AppleGothic.ttf"]
 
 
@@ -33,17 +37,22 @@ class Overlay:
     def draw(self, image: np.ndarray, *, detections: list[Detection], tracks: TrackStore | None,
              zones: list[ZoneShape], metrics: dict[str, CrowdMetrics], zone_areas: dict[str, float | None],
              crossing_counts: dict[str, dict[int, int]], density_map: np.ndarray | None, show_heatmap: bool,
-             fps: float, demo_levels: dict | None = None) -> None:
+             fps: float, demo_levels: dict | None = None, flow: np.ndarray | None = None, flow_scale: float = 1.0,
+             flow_origin: tuple[int, int] = (0, 0),
+             active: dict[str, list[str]] | None = None, zone_crossings: dict[str, dict[str, int]] | None = None,
+             health: list[str] | None = None) -> None:
         if show_heatmap and density_map is not None:
             _heatmap(image, density_map)
-        self._zones(image, zones, metrics, zone_areas, crossing_counts)
+        self._zones(image, zones, metrics, zone_areas, crossing_counts, active or {}, zone_crossings or {})
+        if flow is not None:
+            _flow_arrows(image, flow, flow_scale, flow_origin, zones)
         self._detections(image, detections, tracks)
-        self._panel(image, zones, metrics, fps, demo_levels)
+        self._panel(image, zones, metrics, fps, demo_levels, health or [])
         self._flush(image)
 
     # --- parts ---------------------------------------------------------------------------------------------------
 
-    def _zones(self, image, zones, metrics, zone_areas, crossing_counts) -> None:
+    def _zones(self, image, zones, metrics, zone_areas, crossing_counts, active, zone_crossings) -> None:
         fill = image.copy()
         for zone in zones:
             level = metrics[zone.id].level if zone.id in metrics else None
@@ -56,8 +65,13 @@ class Overlay:
             cv2.polylines(image, [pts], True, color, 2, cv2.LINE_AA)
             area = zone_areas.get(zone.id)
             label = f"{zone.id}  {self._level_text(m.level) if m else ''}" + (f"  {area:.0f} m²" if area else "")
+            if zone.lines and zone.id in zone_crossings:
+                label += f"  in {zone_crossings[zone.id]['in']} / out {zone_crossings[zone.id]['out']}"
             x, y = pts.min(axis=0)
             self._text((int(x), max(int(y) - 24, 0)), label, color)
+            badges = [BADGES[t] for t in active.get(zone.id, []) if t in BADGES]
+            if badges:
+                self._text((int(x), max(int(y) - 48, 0)), "  ".join(badges), LEVEL_COLORS[CrowdLevel.RED])
             for line_id, line in zone.lines.items():
                 a, b = tuple(map(int, line.a)), tuple(map(int, line.b))
                 cv2.line(image, a, b, LINE_COLOR, 3, cv2.LINE_AA)
@@ -75,8 +89,11 @@ class Overlay:
                 label += f" {tracks.tracks[d.track_id].speed_mps:.1f}"
             cv2.putText(image, label, (x1, max(y1 - 4, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1, cv2.LINE_AA)
 
-    def _panel(self, image, zones, metrics, fps, demo_levels) -> None:
+    def _panel(self, image, zones, metrics, fps, demo_levels, health) -> None:
         lines = [(f"FPS {fps:4.1f}", WHITE)]
+        if health:
+            lines.append((f"CAMERA: {' + '.join(health).upper()} — zones hold their last level",
+                          LEVEL_COLORS[CrowdLevel.ORANGE]))
         if demo_levels:
             lines.append((f"DEMO THRESHOLDS: yellow {demo_levels['yellow']} / orange {demo_levels['orange']} / "
                           f"red {demo_levels['red']} /m² (not the real levels)", LEVEL_COLORS[CrowdLevel.RED]))
@@ -85,8 +102,12 @@ class Overlay:
             if m is None:
                 lines.append((f"{zone.id}: not calibrated", UNKNOWN_COLOR))
                 continue
+            speed_from = "flow" if m.count_source == "density" else "tracks"
             lines.append((f"{zone.id}  {self._level_text(m.level)}  {m.density_ppm2:.2f} /m²  "
-                          f"{m.count:.0f} people ({m.count_source})  {m.median_speed_mps:.1f} m/s", LEVEL_COLORS[m.level]))
+                          f"{m.count:.0f} people ({m.count_source})  {m.speed_mps:.1f} m/s ({speed_from})", LEVEL_COLORS[m.level]))
+            lines.append((f"    rise {m.rise_ppm2_per_min:+.2f} /m²/min  turbulence {m.turbulence:.2f}  "
+                          f"counter-flow {m.counter_flow:.2f}  in {m.inflow_per_min:.0f} / out {m.outflow_per_min:.0f} per min",
+                          LEVEL_COLORS[m.level]))
         height = 10 + 24 * len(lines)
         width = 20 + max(len(text) for text, _ in lines) * 9
         cv2.rectangle(image, (0, 0), (min(width, image.shape[1]), height), (0, 0, 0), -1)
@@ -120,6 +141,20 @@ def _heatmap(image: np.ndarray, density_map: np.ndarray) -> None:
         return
     colored = cv2.applyColorMap(np.uint8(255 * np.clip(density_map / peak, 0, 1)), cv2.COLORMAP_JET)
     cv2.addWeighted(colored, HEATMAP_ALPHA, image, 1 - HEATMAP_ALPHA, 0, dst=image)
+
+
+def _flow_arrows(image: np.ndarray, flow: np.ndarray, scale: float, origin: tuple[int, int], zones: list[ZoneShape]) -> None:
+    """Arrows on a coarse grid inside the zones, pointing where the image moves in FLOW_ARROW_S."""
+    ox, oy = origin
+    h, w = int(flow.shape[0] / scale), int(flow.shape[1] / scale)
+    for y in range(oy + FLOW_STEP_PX // 2, oy + h, FLOW_STEP_PX):
+        for x in range(ox + FLOW_STEP_PX // 2, ox + w, FLOW_STEP_PX):
+            if zones and not any(z.polygon.contains((x, y)) for z in zones):
+                continue
+            fy, fx = min(int((y - oy) * scale), flow.shape[0] - 1), min(int((x - ox) * scale), flow.shape[1] - 1)
+            dx, dy = flow[fy, fx] * FLOW_ARROW_S
+            if dx * dx + dy * dy >= 4:   # skip sub-2-px arrows: still ground would be a carpet of dots
+                cv2.arrowedLine(image, (x, y), (int(x + dx), int(y + dy)), FLOW_COLOR, 1, cv2.LINE_AA, tipLength=0.3)
 
 
 def _track_color(track_id: int) -> tuple[int, int, int]:

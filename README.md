@@ -58,6 +58,11 @@ real change (debounce, cooldown, escalation, all-clear). Measured: DM-Count MAE 
 (`docs/results.md`). On the dense crossing demo (demo thresholds, marked on screen) the zone rises GREEN → RED in 13.5 s
 with one console alert per level.
 
-Next, Day 3: crowd flow and turbulence, stagnation / inflow / counter-flow rules, camera health.
+Day 3 done: optical-flow speed, turbulence and counter-flow per zone, and the rules for a stuck crowd, fast rise,
+counter-flow and more-in-than-out, plus camera health (lost / frozen / dark; zones hold their last level during a fault).
+Measured: calm footage fires nothing; a paused-then-covered test clip raises one camera alert; line inflow on the demo
+clip matches a manual count (5 vs 5), outflow over-counts (11 vs 7–8).
+
+Next, Day 4: level accuracy on labeled clips, face blur, SQLite event storage.
 
 Bridge mode (railing / climbing detection) was split out and is kept in `../bridge-safety-ai/`.

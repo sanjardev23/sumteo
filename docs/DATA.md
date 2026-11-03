@@ -62,15 +62,27 @@ The independent sanity check is the Day 1 walking speed (~1.0–1.5 m/s). Record
 
 | Camera | Ground square | Zone area | Lines | Basis |
 |---|---|---|---|---|
-| `crowd_demo` (crowd_02) | 6 × 6 m (reprojects to 36.0 m²) | `main` 148.3 m² | entry = white floor line, 13.8 m | vanishing points → focal ≈ 1243 px (55° HFOV), height ≈ 6.5 m; scale from 477 person boxes |
+| `crowd_demo` (crowd_02) | 6 × 6 m (reprojects to 36.0 m²) | `main` 148.3 m² | entry (602,510)–(1104,571), 12.9 m (was 13.8 m; clipped to the zone's slanted sides): moved 2.5 m from the zone's far edge toward its centre on Day 3 (see *Counting lines*) | vanishing points → focal ≈ 1243 px (55° HFOV), height ≈ 6.5 m; scale from 477 person boxes |
 | `crossing_demo` (crowd_06) | 6 × 6 m, image (273,852) (447,852) (451,998) (261,998); 1 m grid follows the zebra stripes | `crossing` 79.4 m² (first estimate 85.9 m², ~8% tighter after the guided click — within ±10%) | none | zebra stripes: 45 cm stripe + 45 cm gap = 0.9 m period (Japanese standard), measured by FFT on two crosswalks at the same image height; local affine fit ~33 px/m across, ~25 px/m up/down, tilt ≈ 49°, crosswalks 31° apart; scale grows ~13% from y 780 to 1220; check: shoulders ≈ 13 px ≈ 0.45 m |
 
-**`crossing_demo` overrides are demo-only, not danger.** A normal busy crossing (~1 person/m²) is GREEN by Fruin, which
-is correct. To make the clip walk through every level, the camera YAML sets:
-- `crowd.levels_ppm2` = real × 0.15 (0.30 / 0.60 / 0.75), `hysteresis_ppm2` 0.06
+**Counting lines** — put them where people stay tracked on **both** sides, closer to the camera than the zone's far
+edge, not where walkers disappear into a background crowd. crowd_02's first line (620,492)–(1120,548) sat on the far
+edge: outward walkers vanished into the crowd behind it within ~0.7 m, so the 1 s median + 0.3 m band never registered
+the far side (by eye OUT ~15, system 5). Moved 2.5 m toward the centre (computed with the homography, clipped to the
+zone edges): by eye IN 5 / system 5, OUT 7–8 / system 11. A 5 m move gave more back-and-forth double counts.
+
+**`crossing_demo` overrides.** Two kinds, kept apart:
+
+*Camera properties (real — a real top-down camera would need the same):*
 - `crowd.switch_density_ppm2` 0.0 — always the density count; from this height YOLO finds ~1 in 4 people
 - `models.density` = `models/dmcount_nwpu.pth` — on a busy patch counted by eye at ~150: NWPU 154 (1×) / 152 (2×),
   SH-A 140 → 84 (scale-sensitive), SH-B 5, YOLO 34. Tiny top-down people need NWPU.
+
+*Demo-only, not danger:* a normal busy crossing (~1 person/m²) is GREEN by Fruin, which is correct. To make the clip
+walk through every level:
+- `crowd.levels_ppm2` = real × 0.15 (0.30 / 0.60 / 0.75), `hysteresis_ppm2` 0.06
+- `crowd.rise_ppm2_per_min` 0.15, `rise_min_density` 0.3 — the rise rule scaled the same × 0.15, so the demo shows
+  `DENSITY_RISING` before ORANGE
 
 Anything shown from this camera must say it runs on demo thresholds — the overlay and dashboard show a red
 "DEMO THRESHOLDS" line automatically (ARCHITECTURE §2.1, §2.12).

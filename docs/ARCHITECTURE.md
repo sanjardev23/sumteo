@@ -53,10 +53,21 @@ flowchart TD
 - `VideoSource` wraps OpenCV `VideoCapture` for file, webcam index or RTSP URL.
 - Yields `Frame(image, ts, index)`. For files, `ts` comes from the frame index / FPS so results are reproducible.
 - Optional `target_fps` frame skipping keeps processing real-time on a laptop.
-- **Camera health:** the source reports when the feed is lost (read fails / reconnect fails), frozen (no pixel
-  change for `frozen_seconds`) or dark (mean brightness below `dark_mean_below`). A dead camera at a hotspot is a
-  silent failure, so it raises `CAMERA_HEALTH`.
-- `overlay.py` — draws boxes, IDs, zones, lines, level colors and labels. Korean labels go through Pillow with the
+- **Camera health** (`health.py` — `CameraHealth`): a dead camera at a hotspot is a silent failure, so it raises
+  **one** `CAMERA_HEALTH` condition per camera (`zone_id` None, `details.problems` = list of `lost` / `frozen` / `dark`),
+  so several problems at once give one event.
+  - **frozen:** mean abs gray difference to the previous frame (downscaled) below `camera_health.frozen_diff_below`
+    (0.5) for `frozen_seconds`
+  - **dark:** mean gray below `dark_mean_below`
+  - **lost** (live sources only — end of file is normal): `VideoSource` tries to reopen `reconnect_attempts` times,
+    `camera_health.reconnect_wait_s` (1.0) apart; then it yields placeholder frames with `image=None` once per second
+    and keeps retrying, so the loop and the engine keep running.
+  - **while any problem is active** the pipeline skips perception **and** the analyzers: zones hold their last level
+    and emit nothing until the feed is healthy again — in particular no `ALL_CLEAR`, because a dead camera must never
+    announce "calm". The overlay shows "CAMERA: <problems> — zones hold their last level". (User decision: hold last
+    level, not "unknown".)
+- `overlay.py` — draws boxes, IDs, zones, lines, level colors and labels, flow arrows (toggle `f`), per-zone badges
+  for active rule conditions, in / out counts per zone and a camera-health badge. Korean labels go through Pillow with the
   macOS AppleSDGothicNeo font (OpenCV can't draw Hangul); if the font is missing, labels fall back to English.
 - **Demo tag:** when a camera overrides `crowd.levels_ppm2`, the metrics panel shows a red line
   "DEMO THRESHOLDS: yellow … / orange … / red … /m² (not the real levels)" with the values in use, so a demo can't be
@@ -67,13 +78,25 @@ flowchart TD
 |---|---|---|---|
 | `detector.py` | YOLO26n/s (person class only) + ByteTrack | `list[Detection(track_id, bbox, conf)]` | every frame |
 | `density.py` | DM-Count (authors' weights: SH-B default; SH-A / NWPU per camera) | density map + count | every N frames (≈1 fps) |
-| `flow.py` | OpenCV Farneback optical flow | mean speed, direction histogram, turbulence | every 2–3 frames |
+| `flow.py` | OpenCV Farneback optical flow | per-zone flow speed (m/s), turbulence, counter-flow | every `models.flow_every_n_frames` |
 
 Detector settings live in config `models:` (`detector`, `detector_imgsz` 1280, `detector_conf` 0.1, `tracker`); tracker
 thresholds live in `configs/bytetrack.yaml` (high 0.2, low 0.05, new track 0.3, buffer 30 frames = `tracking.lost_after_s`
 at 15 fps, match 0.95). Why: in high, wide-angle shots people are small, so imgsz 640 finds almost nobody and stock
 ByteTrack churns IDs. The low `detector_conf` only feeds ByteTrack's second-stage matching; a new track still needs ≥ 0.3,
 so weak false boxes don't become tracks.
+
+**Flow** (`flow.py`): Farneback on gray frames downscaled ×0.5. Flow → px/s → each grid point to a world velocity in
+m/s through the homography. Per zone, points are **weighted by the density map** at that point, so empty ground doesn't
+pull the speed to 0.
+- `flow_speed` = weighted mean |v| (m/s)
+- a point is *moving* when |v| ≥ `crowd.flow_moving_mps` (0.3, same as `still_speed_mps`)
+- `turbulence` = 1 − |weighted mean unit vector| over moving points (0 = one direction, 1 = chaotic)
+- `counter_flow` = weighted share of moving points more than 90° from the main (mean) direction
+- both are 0 when nothing moves
+- flow runs only on the zones' bounding box (`zones_roi`, 8 px margin), not the whole frame — on the 1080×2046
+  crossing frame Farneback took 41 ms per run full-frame
+- `CrowdAnalyzer` smooths all three like density (median over `smoothing_s`, §2.5)
 
 **Why two counting methods?** Detection works well up to ~2–3 people/m². In dense crowds people
 are occluded and detection under-counts badly, so the density model takes over.
@@ -82,6 +105,9 @@ are occluded and detection under-counts badly, so the density model takes over.
 zone uses the detection count; from 2.5 up it uses the density count. Detection saturates in crowds, so it can't be
 the one that triggers the switch. Before the first density run, detection is used. At low density detection is the
 better count (crowd_02 zone `main`, 148 m²: detection 13.4 people on average, DM-Count SH-B 11.4, SH-A 10.5).
+**Top-down cameras** where YOLO finds almost nobody must set `crowd.switch_density_ppm2: 0` in their camera YAML
+(always density). This is a real camera property, not a demo value: with the default 2.5, `crossing_demo` on real
+thresholds counts 0 people, because NWPU's 0.88 /m² is under the switch and detection finds ~1 person.
 
 **Density weights per camera:** the default `models.density` is `models/dmcount_shb.pth` (street scenes). Dense
 cameras set `models.density: models/dmcount_sha.pth` in their camera YAML `overrides:` — on the dense Shibuya clip
@@ -119,7 +145,7 @@ each flag multiplies the zone's level thresholds by a factor from `crowd.risk_fa
 - `seconds_in_zone: dict[zone_id, seconds]` — a camera has several zones, so time is kept per zone
 - line crossings for inflow counting: `last_side` keyed by line id `"<zone>:entry"` / `"<zone>:exit"` (+1 / -1)
 - `TrackStore.update(ts, detections, homography, zones)` takes all of the camera's zones and returns this frame's new
-  `Crossing(ts, line_id, track_id, direction)` list; running totals in `TrackStore.crossing_counts[line_id][direction]`
+  `Crossing(ts, line_id, track_id, direction, into_zone)` list; running totals in `TrackStore.crossing_counts[line_id][direction]`
 
 **Crossing rule** — a raw side change between frames miscounts: a foot standing on the line jitters across it, and
 someone walking past a line's end crosses its infinite extension. So:
@@ -130,28 +156,40 @@ someone walking past a line's end crosses its infinite extension. So:
 - a side is only registered once that median foot point is ≥ `tracking.line_band_m` (0.3 m, world metres) from the line;
   inside the band the last registered side is kept, so standing on the line never counts
 - a crossing = the registered side flips **and** the median foot projects onto the segment between its two endpoints
-- `direction` = the new side (+1 / -1), so inflow / outflow can use direction instead of assuming every entry-line
-  crossing is someone coming in
+- `direction` = the new side (+1 / -1)
+- **into the zone** = toward the zone centre: on any of a zone's lines (entry or exit), a crossing whose new side holds
+  the zone polygon's centroid (world metres) has `into_zone = True` (inflow); the other way is outflow
+- **re-cross lockout:** after a track's registered side on a line changes, a further change on that line within
+  `tracking.recross_lockout_s` (3.0) updates the side but isn't counted. Why: on crowd_02 every remaining re-count was
+  the same ID re-crossing the same line 0.5–1.8 s later. A teleport guard was rejected — far-away foot jitter already
+  gives normal tracks single-frame steps of 20+ m/s, so it can't tell these apart
 - no calibration (homography `None`) → line counting is skipped, because the band is in metres; zone timers still work
-- known limitation: ByteTrack ID switches inside a tight standing group on the line, and lost IDs re-matched to a
-  different person after a gap, still double-count. A fix (e.g. a "teleport guard") is an open Day 3 decision
 
 **`crowd.py` — CrowdAnalyzer → `CrowdMetrics`** (one analyzer per zone, per second)
 - `CrowdAnalyzer(cfg, zone_id, zone_area_m2, risk_factor)`;
   `update(ts, detection_count, density_count, median_speed_mps) → CrowdMetrics`; `conditions(metrics) → list[Condition]`
 - `risk_factor(cfg, zone.risk)` = product of the flagged factors, floored at `risk_factor_floor`
-- Day 3 fields (flow, turbulence, counter-flow, rise, inflow / outflow) stay 0.0 until Day 3
+- **zone speed follows the count source:** a zone counted by detection uses `median_speed_mps` (tracks); a zone counted
+  by density uses `flow_speed` — from high up YOLO finds almost nobody, so track speed would read 0. Exposed as
+  `CrowdMetrics.speed_mps`; `STAGNATION` uses it. No new threshold. A zone hovering at the switch flips the speed source
+  every update; `STAGNATION` still fires after `stagnation_seconds` (unit-tested).
+- **flow metrics are smoothed like density:** `flow_speed`, `turbulence` and `counter_flow` are each a median over
+  `smoothing_s`. Why: raw turbulence on `crossing_demo` jumped 0.1 ↔ 0.85 second to second, so ORANGE + turbulence → RED
+  flickered. Side effect: "moving again" resets the stagnation timer only after more than one smoothing window of
+  movement — it errs toward warning.
+- conditions carry `details.level`, so `STAGNATION` can map to CRITICAL at ≥ ORANGE
 
 | Metric | How |
 |---|---|
 | `count` | hybrid detection / density |
 | `density_ppm2` | count ÷ zone area (m²), **median over the last `smoothing_s`** |
-| `flow_speed` | mean optical-flow magnitude inside zone |
+| `flow_speed` | density-weighted mean optical-flow speed in the zone, m/s (§2.2) |
 | `median_speed_mps` | median walking speed of tracks in the zone |
-| `turbulence` | variance of flow directions (people pushing in different directions = danger) |
-| `counter_flow` | share of flow vectors opposite to the main direction |
-| `rise_ppm2_per_min` | slope of density over the last `rise_window_s` |
-| `inflow_per_min` / `outflow_per_min` | entry / exit line `Crossing`s (with direction, §2.5 crossing rule) |
+| `speed_mps` | `median_speed_mps` if the zone is counted by detection, `flow_speed` if by density |
+| `turbulence` | 1 − \|weighted mean unit vector\| of moving flow points (0 = one direction, 1 = chaotic) |
+| `counter_flow` | weighted share of moving flow points > 90° from the main direction |
+| `rise_ppm2_per_min` | least-squares slope of the smoothed density over the last `rise_window_s`, × 60; only once the samples span ≥ `smoothing_s` (no start-up noise) |
+| `inflow_per_min` / `outflow_per_min` | `into_zone` True / False crossings on the zone's lines in the last `inflow_window_s`, × 60 ÷ `inflow_window_s` — always the full window, so a short clip doesn't extrapolate a few early crossings |
 | `level` | from thresholds below, with risk factors and hysteresis |
 
 **Levels** — thresholds from crowd-safety literature (Fruin levels of service), labeled with the Korean national
@@ -178,17 +216,26 @@ The analyzer emits `Condition`s; the rule engine decides which become events.
 | Event | Condition (all thresholds in config `crowd:`) | Severity |
 |---|---|---|
 | `CROWD_LEVEL` | emitted every update while level ≥ YELLOW (`details.level`); the engine turns it into one event per activation / severity change | YELLOW → INFO, ORANGE → WARNING, RED → CRITICAL |
-| `STAGNATION` | level ≥ `stagnation_min_level` **and** `median_speed_mps` < `stagnation_speed_mps` for ≥ `stagnation_seconds` — the crowd is stuck (the Itaewon pattern) | WARNING; CRITICAL if level ≥ ORANGE |
+| `STAGNATION` | level ≥ `stagnation_min_level` **and** `speed_mps` < `stagnation_speed_mps` for ≥ `stagnation_seconds` — the crowd is stuck (the Itaewon pattern) | WARNING; CRITICAL if level ≥ ORANGE |
 | `DENSITY_RISING` | `rise_ppm2_per_min` > `rise_ppm2_per_min` threshold while density ≥ `rise_min_density` — **early warning** before ORANGE | WARNING |
 | `COUNTER_FLOW` | `counter_flow` > `counter_flow_warn` while level ≥ YELLOW — two streams colliding | WARNING |
 | `INFLOW_IMBALANCE` | `inflow_per_min` ≥ `inflow_min_per_min` and inflow ÷ outflow > `inflow_ratio` over `inflow_window_s` — the zone is filling | WARNING |
-| `CAMERA_HEALTH` | feed lost / frozen / dark (see 2.1) | WARNING |
-| `ALL_CLEAR` | emitted while GREEN; the engine fires it only if that zone fired WARNING/CRITICAL since its last all-clear | INFO |
+| `CAMERA_HEALTH` | feed lost / frozen / dark — one condition per camera, `details.problems` (§2.1). While active, that camera's zones hold their last level and emit no other conditions (no `ALL_CLEAR`) | WARNING |
+| `ALL_CLEAR` | emitted while GREEN **and** no other condition is active for that zone (so a GREEN zone's `INFLOW_IMBALANCE` doesn't get an all-clear right after its own WARNING); the engine fires it only if that zone fired WARNING/CRITICAL since its last all-clear | INFO |
 
 Conditions are emitted **continuously** while true; deciding what
 becomes an event is the engine's job. Rules not listed with a severity mapping use `DEFAULT_SEVERITY`.
 
 Turbulence is used only inside the RED escalation for now (hard to tune as its own rule on stock video).
+
+> **Known limitation — outflow overcounts.** On crowd_02, outflow reads ~40% high (by eye 7–8, system 11): tracks that
+> start just inside the zone and walk out (an out with no matching in) and track fragments near the line. That biases
+> inflow ÷ outflow **low**, so `INFLOW_IMBALANCE` may fire late or not at all — the unsafe direction for an early
+> warning. Line placement matters (DATA.md §2, *Counting lines*).
+
+> **Known limitation — turbulence is untuned.** It reads 0.4–0.7 even on calm, sparse crowd_02, because people in a
+> station square walk in all directions. With `turbulence_red` 0.6, most ORANGE crowds moving in several directions
+> become RED. This errs toward warning; it can't be tuned without dense stock footage (Day 4).
 
 ### 2.7 Events (`src/sumteo/events/`)
 - `models.py` — `Condition(type, zone_id, track_id, details)`, `Event(id, camera_id, type, severity, ts, zone_id, details, snapshot_path, verified, acknowledged)`
@@ -292,6 +339,7 @@ Camera workers and the API share state through SQLite + a small in-memory pub/su
 |---|---|
 | Detection + tracking (YOLO26n, 1280) | ≥ 15 FPS (measured 17–28 FPS on the Day 1 clips) |
 | Density model | ~1 run/s |
+| Full pipeline (Day 3, MPS) | measured: crowd_02 15.6 FPS; crossing_demo 8.6 FPS — density (928 ms/run, every 15 frames) is the main cost |
 | Alert latency (level change → dashboard) | < 3 s + debounce |
 
 ---
