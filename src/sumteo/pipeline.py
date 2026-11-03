@@ -29,13 +29,14 @@ HEATMAP_KEY, FLOW_KEY = ord("h"), ord("f")
 
 
 class Pipeline:
-    def __init__(self, app: AppConfig, camera: CameraConfig):
+    def __init__(self, app: AppConfig, camera: CameraConfig, notifiers: list | None = None):
+        """`notifiers` are added to the configured ones (the API adds the platform notifier)."""
         self.app = app
         self.camera = camera
         runtime, models, health = app.runtime, app.models, app.camera_health
         self.source = VideoSource(camera.source, target_fps=runtime.get("target_fps"),
                                   reconnect_attempts=health["reconnect_attempts"],
-                                  reconnect_wait_s=health["reconnect_wait_s"])
+                                  reconnect_wait_s=health["reconnect_wait_s"], loop=runtime.get("loop", False))
         self.tracker = PersonTracker(
             models["detector"], models["detector_imgsz"], models["detector_conf"], models["tracker"], runtime["device"],
         )
@@ -61,7 +62,8 @@ class Pipeline:
             for z in self.zones if self.zone_areas[z.id]
         }
         self.engine = RuleEngine(camera.id, app.events["debounce_s"], app.events["cooldown_s"])
-        self.notifiers = [ConsoleNotifier()] if app.notifiers.get("console") else []
+        self.notifiers = ([ConsoleNotifier()] if app.notifiers.get("console") else []) + list(notifiers or [])
+        self.stopped = False   # set from another thread to end run()
         privacy = app.privacy
         self.blur = FaceBlur(models["face_detector"], privacy["head_fraction"]) if privacy.get("blur_faces") else None
         self.zone_sigma = {z.id: head_sigma_px(self.homography, z.polygon.points, privacy["head_size_m"])
@@ -76,8 +78,9 @@ class Pipeline:
         self.zone_crossings = {z.id: {"in": 0, "out": 0} for z in self.zones}
         # Day 5: platform notifier → API
 
-    def run(self, on_frame=None) -> None:
-        """`on_frame(ts, metrics, events)` is called after every frame (evaluation, Day 5 API)."""
+    def run(self, on_frame=None, on_image=None) -> None:
+        """`on_frame(ts, metrics, events)` is called after every frame (evaluation, Day 5 API); `on_image(image)` gets
+        the finished frame — blurred, with overlay — for the MJPEG stream."""
         show = self.app.runtime.get("show_window", True)
         save_path = self.app.runtime.get("save_path")
         writer: cv2.VideoWriter | None = None
@@ -88,6 +91,8 @@ class Pipeline:
         detections, last_second = [], None
         try:
             for i, frame in enumerate(self.source.frames()):
+                if self.stopped:
+                    break
                 conditions = self.health.update(frame)
                 if self.health.problems:
                     # A lost, frozen or dark feed says nothing about the crowd: zones keep their last level and emit
@@ -141,6 +146,8 @@ class Pipeline:
                     zone_crossings=self.zone_crossings, health=self.health.problems,
                 )
                 self._deliver(events, frame.image)
+                if on_image:
+                    on_image(frame.image)
                 if on_frame:
                     on_frame(frame.ts, self.metrics, events)
                 if save_path:

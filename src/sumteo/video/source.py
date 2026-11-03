@@ -1,4 +1,4 @@
-"""Days 1, 3 — video input: file, webcam index or RTSP URL; live feeds reconnect (Day 3)."""
+"""Days 1, 3, 5 — video input: file, webcam index or RTSP URL; live feeds reconnect (Day 3); files can loop (Day 5)."""
 from __future__ import annotations
 
 import time
@@ -19,13 +19,14 @@ class Frame:
 
 class VideoSource:
     def __init__(self, source: str | int, target_fps: float | None = None, reconnect_attempts: int = 0,
-                 reconnect_wait_s: float = 1.0):
+                 reconnect_wait_s: float = 1.0, loop: bool = False):
         if isinstance(source, str) and source.isdigit():
             source = int(source)            # "0" on the command line = webcam 0
         self.source = source
         self.target_fps = target_fps
         self.reconnect_attempts = reconnect_attempts
         self.reconnect_wait_s = reconnect_wait_s
+        self.loop = loop   # files only: start again at the end, the clock keeps running (dashboard demo)
         self.is_file = isinstance(source, str) and Path(source).is_file()
         self.fps: float = 0.0               # native fps, known once frames() opens the source
 
@@ -44,20 +45,28 @@ class VideoSource:
 
     def _file_frames(self, cap: cv2.VideoCapture) -> Iterator[Frame]:
         # Keep frame i when it starts a new 1/target_fps slot; grab() skips without decoding.
+        # When looping, the index (and so the clock) keeps counting from where the file ended.
         keep_every = self.fps / self.target_fps if self.target_fps and self.target_fps < self.fps else 1.0
         next_keep, index = 0.0, 0
         while True:
             if index + 1e-9 < next_keep:
                 if not cap.grab():
-                    return
+                    if not self._rewind(cap):
+                        return
+                    continue
                 index += 1
                 continue
             ok, image = cap.read()
             if not ok:
-                return
+                if not self._rewind(cap):
+                    return
+                continue
             yield Frame(image=image, ts=index / self.fps, index=index)
             next_keep += keep_every
             index += 1
+
+    def _rewind(self, cap: cv2.VideoCapture) -> bool:
+        return self.loop and cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     def _live_frames(self, cap: cv2.VideoCapture) -> Iterator[Frame]:
         # Live feeds have no reproducible clock; use wall time and drop frames we can't keep up with.

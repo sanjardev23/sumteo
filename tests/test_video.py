@@ -33,3 +33,11 @@ def test_target_fps_above_native_keeps_every_frame(tmp_path):
 def test_missing_source_raises():
     with pytest.raises(RuntimeError):
         next(VideoSource("data/raw/does_not_exist.mp4").frames())
+
+
+def test_a_looping_file_keeps_the_clock_running(tmp_path):
+    source = VideoSource(_write_video(tmp_path / "v.mp4", 10, fps=10), loop=True)
+    frames = [f for _, f in zip(range(25), source.frames())]
+    assert [f.index for f in frames] == list(range(25))
+    assert frames[24].ts == pytest.approx(2.4)
+    assert np.array_equal(frames[10].image, frames[0].image)       # second pass starts at the first frame
