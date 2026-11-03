@@ -76,7 +76,7 @@ def main() -> None:
     frame = next(VideoSource(camera.source).frames()).image
     cv2.namedWindow(WINDOW, cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)
     h_px, w_px = frame.shape[:2]
-    scale = min(1.0, 1600 / w_px)
+    scale = min(1.0, 1600 / w_px, 1000 / h_px)   # portrait clips must fit the screen height too
     cv2.resizeWindow(WINDOW, int(w_px * scale), int(h_px * scale))
 
     base = frame.copy()

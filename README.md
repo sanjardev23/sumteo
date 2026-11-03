@@ -23,7 +23,8 @@ uv venv --python 3.12 && source .venv/bin/activate
 uv pip install -e ".[dev]"
 cp .env.example .env
 pytest
-python scripts/run_camera.py --camera configs/cameras/crowd_demo.yaml
+python scripts/run_camera.py --camera configs/cameras/crowd_demo.yaml      # Day 1 demo: tracking, speeds, lines
+python scripts/run_camera.py --camera configs/cameras/crossing_demo.yaml   # dense crossing, demo thresholds
 ```
 
 ## Project layout
@@ -40,12 +41,23 @@ src/sumteo/
   storage/          SQLite
   api/              FastAPI + WebSocket + MJPEG
   pipeline.py       per-camera loop
-scripts/            run_camera, calibrate, eval_crowd
+scripts/            run_camera, calibrate, eval_crowd, stabilize_video (stock-clip prep)
 dashboard/          Next.js (Day 5)
 data/  models/      git-ignored
 ```
 
 ## Status
-Day 0: skeleton and architecture.
+Day 1 done: video in → YOLO26 + ByteTrack people tracking with stable IDs, calibrated zones and counting lines,
+walking speed (m/s), standing time, time in zone and line crossings, drawn live on the video.
+Measured on the demo clip: 26.5 FPS, walkers ~1.0 m/s, standing people ~0.1 m/s, zone 148 m².
+The demo camera's scale is an estimate (±10%); see `docs/DATA.md` §2.
+
+Day 2 done: people/m² per zone from YOLO counts or the DM-Count density map (whichever fits the crowd),
+관심 → 주의 → 경계 → 심각 levels with hysteresis and zone risk factors, and a rule engine that sends exactly one alert per
+real change (debounce, cooldown, escalation, all-clear). Measured: DM-Count MAE 7.34 on ShanghaiTech B
+(`docs/results.md`). On the dense crossing demo (demo thresholds, marked on screen) the zone rises GREEN → RED in 13.5 s
+with one console alert per level.
+
+Next, Day 3: crowd flow and turbulence, stagnation / inflow / counter-flow rules, camera health.
 
 Bridge mode (railing / climbing detection) was split out and is kept in `../bridge-safety-ai/`.

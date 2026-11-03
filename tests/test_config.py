@@ -25,3 +25,8 @@ def test_calibration_is_saved_and_reloaded(tmp_path):
     assert camera.zones[0].polygon == zone.polygon and camera.zones[0].risk.narrow
     assert camera.zones[0].exit_line == []
     assert app.crowd["levels_ppm2"]["yellow"] == 1.0    # demo overrides survive the rewrite
+
+
+def test_camera_keeps_its_overrides_so_demo_thresholds_can_be_flagged():
+    _, demo = load_config(ROOT / "configs/cameras/crossing_demo.yaml", ROOT / "configs/default.yaml")
+    assert "levels_ppm2" in demo.overrides["crowd"]

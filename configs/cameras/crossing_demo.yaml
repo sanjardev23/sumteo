@@ -1,0 +1,31 @@
+# calibration and zones are written by scripts/calibrate.py; risk flags are edited by hand
+id: crossing-demo-1
+name: Scramble crossing (demo)
+source: data/raw/crowd_06.mp4
+calibration:
+  image_points:
+  - [273.0, 852.0]
+  - [447.0, 852.0]
+  - [451.0, 998.0]
+  - [261.0, 998.0]
+  world_points:
+  - [0.0, 0.0]
+  - [6.0, 0.0]
+  - [6.0, 6.0]
+  - [0.0, 6.0]
+zones:
+- id: crossing
+  polygon:
+  - [240.0, 800.0]
+  - [480.0, 800.0]
+  - [480.0, 1040.0]
+  - [240.0, 1040.0]
+  risk: {slope: false, narrow: false, bottleneck: false}
+  entry_line: []
+  exit_line: []
+overrides:
+  models: {density: models/dmcount_nwpu.pth}
+  crowd:
+    levels_ppm2: {yellow: 0.3, orange: 0.6, red: 0.75}
+    hysteresis_ppm2: 0.06
+    switch_density_ppm2: 0.0

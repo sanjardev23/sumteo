@@ -56,12 +56,17 @@ flowchart TD
 - **Camera health:** the source reports when the feed is lost (read fails / reconnect fails), frozen (no pixel
   change for `frozen_seconds`) or dark (mean brightness below `dark_mean_below`). A dead camera at a hotspot is a
   silent failure, so it raises `CAMERA_HEALTH`.
+- `overlay.py` — draws boxes, IDs, zones, lines, level colors and labels. Korean labels go through Pillow with the
+  macOS AppleSDGothicNeo font (OpenCV can't draw Hangul); if the font is missing, labels fall back to English.
+- **Demo tag:** when a camera overrides `crowd.levels_ppm2`, the metrics panel shows a red line
+  "DEMO THRESHOLDS: yellow … / orange … / red … /m² (not the real levels)" with the values in use, so a demo can't be
+  mistaken for real danger. `CameraConfig` keeps its `overrides` dict after merging so this can be detected.
 
 ### 2.2 Perception (`src/sumteo/perception/`)
 | Module | Model | Output | Frequency |
 |---|---|---|---|
 | `detector.py` | YOLO26n/s (person class only) + ByteTrack | `list[Detection(track_id, bbox, conf)]` | every frame |
-| `density.py` | DM-Count (pretrained on ShanghaiTech / NWPU) | density map + count | every N frames (≈1 fps) |
+| `density.py` | DM-Count (authors' weights: SH-B default; SH-A / NWPU per camera) | density map + count | every N frames (≈1 fps) |
 | `flow.py` | OpenCV Farneback optical flow | mean speed, direction histogram, turbulence | every 2–3 frames |
 
 Detector settings live in config `models:` (`detector`, `detector_imgsz` 1280, `detector_conf` 0.1, `tracker`); tracker
@@ -72,7 +77,17 @@ so weak false boxes don't become tracks.
 
 **Why two counting methods?** Detection works well up to ~2–3 people/m². In dense crowds people
 are occluded and detection under-counts badly, so the density model takes over.
-`CrowdAnalyzer` uses `max(detection_count, density_count)` per zone, and trusts density above a switch threshold.
+
+**Switch rule** (per zone): the density model's own people/m² decides. Below `crowd.switch_density_ppm2` (2.5) the
+zone uses the detection count; from 2.5 up it uses the density count. Detection saturates in crowds, so it can't be
+the one that triggers the switch. Before the first density run, detection is used. At low density detection is the
+better count (crowd_02 zone `main`, 148 m²: detection 13.4 people on average, DM-Count SH-B 11.4, SH-A 10.5).
+
+**Density weights per camera:** the default `models.density` is `models/dmcount_shb.pth` (street scenes). Dense
+cameras set `models.density: models/dmcount_sha.pth` in their camera YAML `overrides:` — on the dense Shibuya clip
+(crowd_05) SH-B counts 44 and SH-A 322. Very high, top-down views with tiny people use `models/dmcount_nwpu.pth`
+(`crossing_demo`: NWPU 154 vs ~150 by eye; SH-A 84–140, scale-sensitive). The pipeline sums the density map inside each zone mask.
+DM-Count is MIT-licensed; its model is re-declared in `perception/density.py` and loads the authors' weights.
 
 ### 2.3 Geometry (`src/sumteo/geometry/`)
 - `zones.py`
@@ -121,7 +136,12 @@ someone walking past a line's end crosses its infinite extension. So:
 - known limitation: ByteTrack ID switches inside a tight standing group on the line, and lost IDs re-matched to a
   different person after a gap, still double-count. A fix (e.g. a "teleport guard") is an open Day 3 decision
 
-**`crowd.py` — CrowdAnalyzer → `CrowdMetrics`** (per zone, per second)
+**`crowd.py` — CrowdAnalyzer → `CrowdMetrics`** (one analyzer per zone, per second)
+- `CrowdAnalyzer(cfg, zone_id, zone_area_m2, risk_factor)`;
+  `update(ts, detection_count, density_count, median_speed_mps) → CrowdMetrics`; `conditions(metrics) → list[Condition]`
+- `risk_factor(cfg, zone.risk)` = product of the flagged factors, floored at `risk_factor_floor`
+- Day 3 fields (flow, turbulence, counter-flow, rise, inflow / outflow) stay 0.0 until Day 3
+
 | Metric | How |
 |---|---|
 | `count` | hybrid detection / density |
@@ -149,6 +169,7 @@ crisis-level names so operators read them the way they already do:
 
 **Hysteresis:** a level goes **up** at its threshold but only comes **down** when density falls `hysteresis_ppm2`
 below it (e.g. ORANGE at 4.0, back to YELLOW under 3.6). This stops a crowd sitting at 3.95–4.05 from flipping every second.
+A RED reached through turbulence doesn't change the stored base level that hysteresis works from.
 
 ### 2.6 Rules → conditions
 
@@ -156,25 +177,34 @@ The analyzer emits `Condition`s; the rule engine decides which become events.
 
 | Event | Condition (all thresholds in config `crowd:`) | Severity |
 |---|---|---|
-| `CROWD_LEVEL` | the zone's level changed | YELLOW → INFO, ORANGE → WARNING, RED → CRITICAL |
+| `CROWD_LEVEL` | emitted every update while level ≥ YELLOW (`details.level`); the engine turns it into one event per activation / severity change | YELLOW → INFO, ORANGE → WARNING, RED → CRITICAL |
 | `STAGNATION` | level ≥ `stagnation_min_level` **and** `median_speed_mps` < `stagnation_speed_mps` for ≥ `stagnation_seconds` — the crowd is stuck (the Itaewon pattern) | WARNING; CRITICAL if level ≥ ORANGE |
 | `DENSITY_RISING` | `rise_ppm2_per_min` > `rise_ppm2_per_min` threshold while density ≥ `rise_min_density` — **early warning** before ORANGE | WARNING |
 | `COUNTER_FLOW` | `counter_flow` > `counter_flow_warn` while level ≥ YELLOW — two streams colliding | WARNING |
 | `INFLOW_IMBALANCE` | `inflow_per_min` ≥ `inflow_min_per_min` and inflow ÷ outflow > `inflow_ratio` over `inflow_window_s` — the zone is filling | WARNING |
 | `CAMERA_HEALTH` | feed lost / frozen / dark (see 2.1) | WARNING |
-| `ALL_CLEAR` | a zone that had WARNING/CRITICAL drops back to GREEN | INFO |
+| `ALL_CLEAR` | emitted while GREEN; the engine fires it only if that zone fired WARNING/CRITICAL since its last all-clear | INFO |
+
+Conditions are emitted **continuously** while true; deciding what
+becomes an event is the engine's job. Rules not listed with a severity mapping use `DEFAULT_SEVERITY`.
 
 Turbulence is used only inside the RED escalation for now (hard to tune as its own rule on stock video).
 
 ### 2.7 Events (`src/sumteo/events/`)
 - `models.py` — `Condition(type, zone_id, track_id, details)`, `Event(id, camera_id, type, severity, ts, zone_id, details, snapshot_path, verified, acknowledged)`
 - `engine.py` — `RuleEngine`
-  - **debounce**: a condition must hold `debounce_s` before it fires (kills flicker)
-  - **cooldown**: same `(camera, zone, type)` cannot fire again for `cooldown_s`
-  - **escalation**: a higher severity for the same zone always fires immediately, even inside a cooldown
-  - **combine**: conditions true for the same zone at the same moment go out as **one** event with the highest
-    severity and all reasons in `details` (e.g. "RED + STAGNATION"), not as separate alerts
-  - **all-clear**: one `ALL_CLEAR` when the zone returns to GREEN
+  - **key**: `(zone or track, type)`, one engine per camera; a key fires **once per activation**
+  - **debounce**: per severity — a condition (or a new severity of it) must hold `debounce_s` before it fires (kills flicker)
+  - **escalation**: a higher severity fires immediately, even inside a cooldown
+  - **de-escalation**: a drop in severity is silent but re-arms the key, so a later rise alerts again
+  - **cooldown**: a key that stops and comes back within `cooldown_s` at the same or lower severity is blocked
+  - **combine**: conditions firing for the same zone in the same `update` call go out as **one** event with the highest
+    severity and `details.reasons` listing all types (e.g. CROWD_LEVEL RED + STAGNATION), not as separate alerts
+  - **all-clear**: one `ALL_CLEAR` when the zone returns to GREEN, only if it fired WARNING/CRITICAL since the last one
+    - no cooldown on `ALL_CLEAR` — the WARNING/CRITICAL gate is enough; with a cooldown, ORANGE → GREEN → ORANGE → GREEN
+      inside `cooldown_s` swallowed the second all-clear and operators were never told the zone was calm
+    - firing an `ALL_CLEAR` clears that zone's cooldowns: once declared calm, a new rise is a new situation and alerts,
+      even within `cooldown_s` of the previous alert
 
 ### 2.8 Alert routing (`src/sumteo/events/notifiers/`)
 Alerts live **in the platform**: the people on duty watch the dashboard, so that is where alerts appear first.
@@ -229,6 +259,8 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 - Alert feed (color by severity, "Acknowledge" button, escalation mark), camera-health badges, sound + browser notification
 - Crowd density chart per zone with level bands
 - Event detail: blurred snapshot, rules that fired, VLM note
+- **Demo tag:** every view that shows a camera's level carries the same red "DEMO THRESHOLDS … (not the real levels)"
+  line as the overlay (§2.1) when that camera overrides `crowd.levels_ppm2`
 - **Public signboard page** (extra): full-screen level + short instruction in Korean and English
   (e.g. "Crowded — use exit B →"), the way district signboards guide people away from a jam
 
@@ -293,7 +325,8 @@ location-targeted disaster text messages, KakaoTalk AlimTalk business channel, s
 |---|---|
 | Language | Python 3.12 (ML libraries lag behind the newest Python) |
 | CV / ML | OpenCV, PyTorch (MPS on Mac), Ultralytics (YOLO26, ByteTrack) |
-| Density | DM-Count (PyTorch, pretrained weights) |
+| Density | DM-Count (PyTorch, authors' pretrained weights, MIT) |
+| Overlay | OpenCV + Pillow (Hangul labels) |
 | Config | YAML + Pydantic |
 | API | FastAPI, uvicorn, WebSocket |
 | DB | SQLite (→ Postgres later) |

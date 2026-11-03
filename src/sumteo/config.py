@@ -34,6 +34,7 @@ class CameraConfig(BaseModel):
     source: str | int
     calibration: Calibration = Calibration()
     zones: list[Zone] = []
+    overrides: dict = {}   # kept after merging so the overlay can flag demo thresholds
 
 
 class AppConfig(BaseModel):
@@ -77,4 +78,4 @@ def load_config(camera_path: str | Path, default_path: str | Path = "configs/def
     default = yaml.safe_load(Path(default_path).read_text())
     camera = yaml.safe_load(Path(camera_path).read_text())
     overrides = camera.pop("overrides", None) or {}
-    return AppConfig(**_deep_merge(default, overrides)), CameraConfig(**camera)
+    return AppConfig(**_deep_merge(default, overrides)), CameraConfig(**camera, overrides=overrides)
