@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import statistics
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -17,6 +18,8 @@ from sumteo.geometry.zones import ZoneShape
 from sumteo.perception.density import DensityEstimator
 from sumteo.perception.detector import PersonTracker
 from sumteo.perception.flow import FlowEstimator, ZoneFlow, zone_flow, zone_grid, zones_roi
+from sumteo.privacy.blur import FaceBlur, head_sigma_px
+from sumteo.storage.db import Storage
 from sumteo.video.health import CameraHealth
 from sumteo.video.overlay import Overlay
 from sumteo.video.source import VideoSource
@@ -50,7 +53,7 @@ class Pipeline:
                            for z in self.zones}
         tracking = app.tracking
         self.tracks = TrackStore(tracking["lost_after_s"], tracking["speed_window_s"], tracking["still_speed_mps"],
-                                 tracking["line_band_m"], tracking["recross_lockout_s"])
+                                 tracking["line_band_m"], tracking["recross_lockout_s"], tracking["out_dwell_s"])
         # Levels need people/m², so only calibrated zones get an analyzer.
         risks = {z.id: z.risk for z in camera.zones}
         self.analyzers = {
@@ -59,16 +62,22 @@ class Pipeline:
         }
         self.engine = RuleEngine(camera.id, app.events["debounce_s"], app.events["cooldown_s"])
         self.notifiers = [ConsoleNotifier()] if app.notifiers.get("console") else []
+        privacy = app.privacy
+        self.blur = FaceBlur(models["face_detector"], privacy["head_fraction"]) if privacy.get("blur_faces") else None
+        self.zone_sigma = {z.id: head_sigma_px(self.homography, z.polygon.points, privacy["head_size_m"])
+                           for z in self.zones} if self.blur and self.homography else {}
+        self.storage = Storage(app.storage["db_path"]) if app.storage.get("db_path") else None
+        self.snapshot_dir = Path(app.events["snapshot_dir"])
         self.overlay = Overlay()
         # A camera with its own level thresholds is a demo: say so on screen, so it can't be mistaken for real danger.
         self.demo_levels = app.crowd["levels_ppm2"] if "levels_ppm2" in camera.overrides.get("crowd", {}) else None
         self.metrics: dict[str, CrowdMetrics] = {}
         self.active: dict[str, list[str]] = {}                   # zone id → condition types holding now (badges)
         self.zone_crossings = {z.id: {"in": 0, "out": 0} for z in self.zones}
-        # Day 4: db, blur
         # Day 5: platform notifier → API
 
-    def run(self) -> None:
+    def run(self, on_frame=None) -> None:
+        """`on_frame(ts, metrics, events)` is called after every frame (evaluation, Day 5 API)."""
         show = self.app.runtime.get("show_window", True)
         save_path = self.app.runtime.get("save_path")
         writer: cv2.VideoWriter | None = None
@@ -76,14 +85,18 @@ class Pipeline:
         density_map, zone_density, masks = None, {}, None
         flow_field, grids, zone_flows = None, None, {}
         show_heatmap, show_flow = False, False
+        detections, last_second = [], None
         try:
             for i, frame in enumerate(self.source.frames()):
                 conditions = self.health.update(frame)
                 if self.health.problems:
                     # A lost, frozen or dark feed says nothing about the crowd: zones keep their last level and emit
                     # nothing, so a covered lens (0 people → GREEN) can never announce an all-clear.
-                    self._fire(frame.ts, conditions)
+                    events = self.engine.process(frame.ts, conditions)
                     if frame.image is None:
+                        self._deliver(events, None)
+                        if on_frame:
+                            on_frame(frame.ts, self.metrics, events)
                         continue
                 else:
                     detections = self.tracker.update(frame.image)
@@ -102,8 +115,21 @@ class Pipeline:
                                                           density_map, self.app.crowd["flow_moving_mps"], self.flow.origin)
                                           for z in self.zones}
                     conditions += self._zone_conditions(frame.ts, detections, crossings, zone_density, zone_flows)
-                    self._fire(frame.ts, conditions)
+                    events = self.engine.process(frame.ts, conditions)
+                    if self.storage and int(frame.ts) != last_second:
+                        last_second = int(frame.ts)
+                        self.storage.add_metrics(self.camera.id, list(self.metrics.values()))
 
+                # Perception saw the raw frame; everything from here on (window, saved video, snapshots) is blurred.
+                # A frozen feed still shows people, so it is blurred with the last known boxes.
+                if self.blur:
+                    # Where the density model counts a zone, the detector misses most people — inside the zone and
+                    # around it — so the whole frame is softened by about one head (the user's choice, §2.10).
+                    sigmas = [self.zone_sigma[z.id] for z in self.zones if z.id in self.zone_sigma
+                              and self.metrics.get(z.id) and self.metrics[z.id].count_source == "density"]
+                    h, w = frame.image.shape[:2]
+                    soft = [([(0, 0), (w, 0), (w, h), (0, h)], max(sigmas))] if sigmas else []
+                    self.blur.apply(frame.image, [d.bbox for d in detections], soft)
                 fps.tick()
                 self.overlay.draw(
                     frame.image, detections=[] if self.health.problems else detections,
@@ -114,6 +140,9 @@ class Pipeline:
                     active=self.active,
                     zone_crossings=self.zone_crossings, health=self.health.problems,
                 )
+                self._deliver(events, frame.image)
+                if on_frame:
+                    on_frame(frame.ts, self.metrics, events)
                 if save_path:
                     writer = writer or _open_writer(save_path, frame.image, self._output_fps())
                     writer.write(frame.image)
@@ -129,6 +158,8 @@ class Pipeline:
         finally:
             if writer is not None:
                 writer.release()
+            if self.storage:
+                self.storage.close()
             if show:
                 cv2.destroyAllWindows()
 
@@ -154,9 +185,16 @@ class Pipeline:
             conditions += zone_conditions
         return conditions
 
-    def _fire(self, ts: float, conditions: list) -> None:
-        for event in self.engine.process(ts, conditions):
-            # Day 4: snapshot → blur → db; Day 6: VLM annotation for CRITICAL
+    def _deliver(self, events: list, image: np.ndarray | None) -> None:
+        """Snapshot (the blurred frame with its overlay) → db → notifiers. Day 6: VLM annotation for CRITICAL."""
+        for event in events:
+            if image is not None:
+                self.snapshot_dir.mkdir(parents=True, exist_ok=True)
+                path = self.snapshot_dir / f"{event.id}.jpg"
+                cv2.imwrite(str(path), image, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                event.snapshot_path = str(path)
+            if self.storage:
+                self.storage.add_event(event)
             for notifier in self.notifiers:
                 notifier.send(event)
 

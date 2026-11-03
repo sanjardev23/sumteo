@@ -12,6 +12,7 @@ models:
   density: models/dmcount_shb.pth
   density_every_n_frames: 15
   flow_every_n_frames: 2
+  face_detector: models/face_detection_yunet_2023mar.onnx   # YuNet (OpenCV Zoo, MIT), for blurring only
 
 tracking:
   lost_after_s: 2.0      # drop a track not seen for this long
@@ -19,13 +20,14 @@ tracking:
   still_speed_mps: 0.3   # below this a person counts as "standing still"
   line_band_m: 0.3       # a side of a counting line registers only this far from it (no jitter counts)
   recross_lockout_s: 3.0 # a track re-crossing the same line within this is an ID switch, not a person
+  out_dwell_s: 2.5       # an OUT counts only after the track was inside this long (IN is never held back); tuned on crowd_02
 
 crowd:
   switch_density_ppm2: 2.5        # above this, trust the density model over detection
   smoothing_s: 5                  # density = median over this window
   levels_ppm2: {yellow: 2.0, orange: 4.0, red: 5.0}
   hysteresis_ppm2: 0.4            # a level is left only when density drops this far below its threshold
-  turbulence_red: 0.6             # orange + turbulence above this => red
+  turbulence_red: 0.8             # orange + turbulence above this => red; calm crowd_02 / crowd_06 reach 0.75 (Day 4 tuning)
   risk_factors: {slope: 0.85, narrow: 0.9, bottleneck: 0.9}   # multiply a zone's level thresholds
   risk_factor_floor: 0.7          # combined factor never goes below this
   stagnation_min_level: YELLOW
@@ -72,6 +74,8 @@ verify:
 
 privacy:
   blur_faces: true
+  head_fraction: 0.2     # top share of every person box is blurred too: far-away faces are too small to detect
+  head_size_m: 0.25      # density-counted zones are softened with a blur of about this size
 
 storage:
   db_path: data/safety.db
