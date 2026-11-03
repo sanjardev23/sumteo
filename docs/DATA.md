@@ -27,6 +27,21 @@ Pretrained weights: the DM-Count GitHub repo (cvlab-stonybrook/DM-Count) links m
   ```
 - Keep 1–2 videos as a held-out test set; tune thresholds only on the others.
 
+### Calibrating stock videos (scale is an estimate)
+Stock footage has no object of known size, so the ground square's real size is **estimated, not measured**:
+1. Vanishing points of two floor-line families (tile joints), assuming a level camera (no roll, principal point at the
+   image centre) → focal length and camera height.
+2. Scale from the median height of many YOLO person boxes, assuming an average person height of 1.65 m.
+3. Check: the projected 1 m grid runs parallel to the floor lines.
+
+Uncertainty is about ±10% in length and speed (mostly the 1.65 m assumption), so about ±20% in areas and people/m²
+(area scales with length squared).
+The independent sanity check is the Day 1 walking speed (~1.0–1.5 m/s). Record each camera's estimate here.
+
+| Camera | Ground square | Zone area | Lines | Basis |
+|---|---|---|---|---|
+| `crowd_demo` (crowd_02) | 6 × 6 m (reprojects to 36.0 m²) | `main` 148.3 m² | entry = white floor line, 13.8 m | vanishing points → focal ≈ 1243 px (55° HFOV), height ≈ 6.5 m; scale from 477 person boxes |
+
 > Don't use real disaster footage (e.g. Itaewon) in the demo. Mention the event in the problem statement only.
 
 ## 3. Seoul real-time city data (optional, context only)

@@ -1,18 +1,30 @@
+# calibration and zones are written by scripts/calibrate.py; risk flags are edited by hand
 id: crowd-demo-1
 name: Station square (demo)
-source: data/raw/crowd_02.mp4      # file path, webcam index (0) or rtsp:// URL
-
-calibration:                       # filled by scripts/calibrate.py
-  image_points: []                 # 4 × [x, y] pixels
-  world_points: []                 # same 4 points × [x, y] meters
-
+source: data/raw/crowd_02.mp4
+calibration:
+  image_points:
+  - [603.0, 612.0]
+  - [745.0, 551.0]
+  - [1006.0, 585.0]
+  - [907.0, 663.0]
+  world_points:
+  - [0.0, 0.0]
+  - [6.0, 0.0]
+  - [6.0, 6.0]
+  - [0.0, 6.0]
 zones:
-  - id: main
-    polygon: []                    # [[x, y], ...] pixels
-    risk: {slope: false, narrow: false, bottleneck: false}
-    entry_line: []                 # optional [[x1, y1], [x2, y2]] for inflow counting
-    exit_line: []
-
-overrides:                         # demo-only thresholds
+- id: main
+  polygon:
+  - [610.0, 495.0]
+  - [1120.0, 550.0]
+  - [1000.0, 710.0]
+  - [500.0, 710.0]
+  risk: {slope: false, narrow: false, bottleneck: false}
+  entry_line:
+  - [620.0, 492.0]
+  - [1120.0, 548.0]
+  exit_line: []
+overrides:
   crowd:
     levels_ppm2: {yellow: 1.0, orange: 2.0, red: 3.0}

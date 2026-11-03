@@ -62,6 +62,17 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+def save_camera_geometry(camera_path: str | Path, calibration: Calibration, zones: list[Zone]) -> None:
+    """Write calibration + zones into a camera YAML (scripts/calibrate.py). Other keys, e.g. `overrides:`, are kept;
+    YAML comments are not."""
+    path = Path(camera_path)
+    data = yaml.safe_load(path.read_text())
+    data["calibration"] = calibration.model_dump(mode="json")
+    data["zones"] = [zone.model_dump(mode="json") for zone in zones]
+    body = yaml.safe_dump(data, sort_keys=False, default_flow_style=None, allow_unicode=True)
+    path.write_text("# calibration and zones are written by scripts/calibrate.py; risk flags are edited by hand\n" + body)
+
+
 def load_config(camera_path: str | Path, default_path: str | Path = "configs/default.yaml") -> tuple[AppConfig, CameraConfig]:
     default = yaml.safe_load(Path(default_path).read_text())
     camera = yaml.safe_load(Path(camera_path).read_text())
