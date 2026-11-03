@@ -1,6 +1,7 @@
 """Day 1 — zones (polygons) and entry/exit counting lines."""
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 import cv2
@@ -33,3 +34,28 @@ class Line:
         """+1 / -1 for the two sides of the line, 0 on it. A side change between frames = a crossing."""
         cross = (self.b[0] - self.a[0]) * (pt[1] - self.a[1]) - (self.b[1] - self.a[1]) * (pt[0] - self.a[0])
         return (cross > 0) - (cross < 0)
+
+    def distance(self, pt: Point) -> float:
+        """Perpendicular distance from `pt` to the (infinite) line."""
+        dx, dy = self.b[0] - self.a[0], self.b[1] - self.a[1]
+        return abs(dx * (pt[1] - self.a[1]) - dy * (pt[0] - self.a[0])) / math.hypot(dx, dy)
+
+    def within_ends(self, pt: Point) -> bool:
+        """True if `pt` projects onto the segment between a and b (not past either end)."""
+        dx, dy = self.b[0] - self.a[0], self.b[1] - self.a[1]
+        t = ((pt[0] - self.a[0]) * dx + (pt[1] - self.a[1]) * dy) / (dx * dx + dy * dy)
+        return 0.0 <= t <= 1.0
+
+
+@dataclass
+class ZoneShape:
+    """Runtime geometry of one configured zone. Lines are in pixels, like the config."""
+    id: str
+    polygon: Polygon
+    lines: dict[str, Line]  # line id ("<zone>:entry" / "<zone>:exit") → line
+
+    @classmethod
+    def from_config(cls, zone) -> ZoneShape:
+        lines = {f"{zone.id}:{kind}": Line(*pts) for kind, pts in (("entry", zone.entry_line), ("exit", zone.exit_line))
+                 if len(pts) == 2}
+        return cls(id=zone.id, polygon=Polygon(list(zone.polygon)), lines=lines)

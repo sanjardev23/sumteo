@@ -77,7 +77,8 @@ are occluded and detection under-counts badly, so the density model takes over.
 ### 2.3 Geometry (`src/sumteo/geometry/`)
 - `zones.py`
   - `Polygon` — crowd area, point-in-polygon. A camera can have **several zones**; each gets its own level.
-  - `Line` — entry / exit counting lines; `side(pt)` tells which side a foot point is on, so a side change = a crossing.
+  - `Line` — entry / exit counting lines (a segment); `side(pt)` tells which side a foot point is on. What counts as a
+    crossing is in §2.5.
 - `calibration.py` — homography from 4 clicked image points ↔ 4 real-world points (meters).
   Converts pixel positions to meters → speeds in m/s and zone areas in m².
   Without calibration, nothing in m² or m/s is meaningful, so every camera config has one.
@@ -101,9 +102,24 @@ each flag multiplies the zone's level thresholds by a factor from `crowd.risk_fa
 - ring buffer of `(ts, foot_point_px, foot_point_m)`
 - `speed_mps` (smoothed over last ~1 s), `still_seconds`
 - `seconds_in_zone: dict[zone_id, seconds]` — a camera has several zones, so time is kept per zone
-- line crossings for inflow counting: `last_side` keyed by line id `"<zone>:entry"` / `"<zone>:exit"`;
-  a side change between frames = one crossing
-- `TrackStore.update(ts, detections, homography, zones)` takes all of the camera's zones
+- line crossings for inflow counting: `last_side` keyed by line id `"<zone>:entry"` / `"<zone>:exit"` (+1 / -1)
+- `TrackStore.update(ts, detections, homography, zones)` takes all of the camera's zones and returns this frame's new
+  `Crossing(ts, line_id, track_id, direction)` list; running totals in `TrackStore.crossing_counts[line_id][direction]`
+
+**Crossing rule** — a raw side change between frames miscounts: a foot standing on the line jitters across it, and
+someone walking past a line's end crosses its infinite extension. So:
+- the side is judged on the track's **median foot position** (median x and y in metres) over the last
+  `tracking.speed_window_s`, and only once the track has at least half a window of history (the same rule as speed).
+  Why: a half-hidden person's box shrinks and the foot point jumps 0.5–1.5 m for one frame; near the far line
+  1 px ≈ 10 cm, so the band alone doesn't absorb it (crowd_02: 36 → 14 crossings)
+- a side is only registered once that median foot point is ≥ `tracking.line_band_m` (0.3 m, world metres) from the line;
+  inside the band the last registered side is kept, so standing on the line never counts
+- a crossing = the registered side flips **and** the median foot projects onto the segment between its two endpoints
+- `direction` = the new side (+1 / -1), so inflow / outflow can use direction instead of assuming every entry-line
+  crossing is someone coming in
+- no calibration (homography `None`) → line counting is skipped, because the band is in metres; zone timers still work
+- known limitation: ByteTrack ID switches inside a tight standing group on the line, and lost IDs re-matched to a
+  different person after a gap, still double-count. A fix (e.g. a "teleport guard") is an open Day 3 decision
 
 **`crowd.py` — CrowdAnalyzer → `CrowdMetrics`** (per zone, per second)
 | Metric | How |
@@ -115,7 +131,7 @@ each flag multiplies the zone's level thresholds by a factor from `crowd.risk_fa
 | `turbulence` | variance of flow directions (people pushing in different directions = danger) |
 | `counter_flow` | share of flow vectors opposite to the main direction |
 | `rise_ppm2_per_min` | slope of density over the last `rise_window_s` |
-| `inflow_per_min` / `outflow_per_min` | entry / exit line crossings |
+| `inflow_per_min` / `outflow_per_min` | entry / exit line `Crossing`s (with direction, §2.5 crossing rule) |
 | `level` | from thresholds below, with risk factors and hysteresis |
 
 **Levels** — thresholds from crowd-safety literature (Fruin levels of service), labeled with the Korean national

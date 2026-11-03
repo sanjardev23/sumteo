@@ -17,6 +17,7 @@ tracking:
   lost_after_s: 2.0      # drop a track not seen for this long
   speed_window_s: 1.0    # smoothing window for speed
   still_speed_mps: 0.3   # below this a person counts as "standing still"
+  line_band_m: 0.3       # a side of a counting line registers only this far from it (no jitter counts)
 
 crowd:
   switch_density_ppm2: 2.5        # above this, trust the density model over detection
