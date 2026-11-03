@@ -53,3 +53,15 @@ def test_events_and_metrics_are_stored(tmp_path):
     assert row[:3] == ("CROWD_LEVEL", "WARNING", "z") and json.loads(row[3])["level"] == "ORANGE"
     assert row[4] == "data/snapshots/x.jpg" and row[5] == 0
     assert store.conn.execute("SELECT zone_id, density_ppm2, level FROM crowd_metrics").fetchall() == [("z", 4.5, "ORANGE")]
+
+
+def test_open_alerts_are_the_unacknowledged_ones_since_a_time(tmp_path):
+    store = Storage(str(tmp_path / "safety.db"))
+    old = Event("cam", EventType.CROWD_LEVEL, Severity.CRITICAL, 1.0, zone_id="z", created_at=100.0)
+    open_ = Event("cam", EventType.CROWD_LEVEL, Severity.CRITICAL, 2.0, zone_id="z", created_at=200.0)
+    acked = Event("cam", EventType.STAGNATION, Severity.WARNING, 3.0, zone_id="z", created_at=210.0)
+    info = Event("cam", EventType.CROWD_LEVEL, Severity.INFO, 4.0, zone_id="z", created_at=220.0)
+    for e in (old, open_, acked, info):
+        store.add_event(e)
+    store.acknowledge(acked.id, "security", 230.0)
+    assert [e["id"] for e in store.open_alerts({"WARNING", "CRITICAL"}, since=150.0)] == [open_.id]

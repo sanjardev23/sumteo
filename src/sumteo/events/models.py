@@ -1,6 +1,7 @@
 """Event data model shared by analyzers, rule engine, storage, API and notifiers."""
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
@@ -60,4 +61,6 @@ class Event:
     acknowledged: bool = False
     acknowledged_by: str | None = None  # role that acknowledged: security / admin
     acknowledged_ts: float | None = None
+    # `ts` is the video clock (reproducible rules); people and the dashboard need wall time.
+    created_at: float = field(default_factory=time.time)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
