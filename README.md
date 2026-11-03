@@ -25,6 +25,10 @@ cp .env.example .env
 pytest
 python scripts/run_camera.py --camera configs/cameras/crowd_demo.yaml      # Day 1 demo: tracking, speeds, lines
 python scripts/run_camera.py --camera configs/cameras/crossing_demo.yaml   # dense crossing, demo thresholds
+
+# platform: API with both cameras, then the dashboard on http://127.0.0.1:3000
+python scripts/serve.py --cameras configs/cameras/crowd_demo.yaml configs/cameras/crossing_demo.yaml
+cd dashboard && npm install && npm run dev
 ```
 
 ## Project layout
@@ -68,6 +72,11 @@ blurred snapshot, and the system was measured on hand-counted clips (`docs/resul
 Fruin, so levels match trivially; on the demo thresholds each level change raises one alert ~2.7 s later. The
 held-out clips showed that high, top-down cameras under-count (~80%) unless set up to use the density model.
 
-Next, Day 5: API, in-platform alerts and the dashboard.
+Day 5 done: alerts reach the people on duty in the platform. A control-room view (live camera grid, a pop-up that stays
+until someone acknowledges, alert history, density charts) and a phone view for guards, with sound and browser
+notifications; an unanswered CRITICAL is re-sent to the control room as "no response" after 60 s. Measured: a rule
+firing reaches both roles in under 1.5 s, and who acknowledged and when is stored.
+
+Next, Day 6: Docker, extras and the demo.
 
 Bridge mode (railing / climbing detection) was split out and is kept in `../bridge-safety-ai/`.

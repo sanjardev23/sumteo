@@ -101,13 +101,15 @@ pull the speed to 0.
 **Why two counting methods?** Detection works well up to ~2–3 people/m². In dense crowds people
 are occluded and detection under-counts badly, so the density model takes over.
 
-**Switch rule** (per zone): the density model's own people/m² decides. Below `crowd.switch_density_ppm2` (2.5) the
-zone uses the detection count; from 2.5 up it uses the density count. Detection saturates in crowds, so it can't be
+**Switch rule** (per zone): the density model's own people/m² decides. Below `crowd.switch_density_ppm2` (**2.0**) the
+zone uses the detection count; from 2.0 up it uses the density count. The default equals the YELLOW threshold (Day 4,
+user decision; was 2.5) so the YELLOW decision never rests on the detection count, which under-counts wherever people
+overlap (crowd_02: 13 vs 17, 14 vs 23). Detection saturates in crowds, so it can't be
 the one that triggers the switch. Before the first density run, detection is used. At low density detection is the
 better count (crowd_02 zone `main`, 148 m²: detection 13.4 people on average, DM-Count SH-B 11.4, SH-A 10.5).
 **Top-down cameras** where YOLO finds almost nobody must set `crowd.switch_density_ppm2: 0` in their camera YAML
-(always density). This is a real camera property, not a demo value: with the default 2.5, `crossing_demo` on real
-thresholds counts 0 people, because NWPU's 0.88 /m² is under the switch and detection finds ~1 person.
+(always density). This is a real camera property, not a demo value: with the default switch (2.5 then, 2.0 now), `crossing_demo`
+on real thresholds counts 0 people, because NWPU's 0.88 /m² is under it and detection finds ~1 person.
 The held-out run confirmed it (§5): crowd_03 / crowd_04 were set up without camera properties, so they used detection
 and counted 9 and 17 people against 65 and 63 by eye (−80%). Afterwards, as a diagnostic only, NWPU on the same frames
 gave 72 and 56 (within ~11%; SH-A 51 / 35, SH-B 24 / 18).
@@ -282,12 +284,15 @@ and role so each group only gets what it must act on. Routes live in config `not
   simple login screen; a real deployment needs proper accounts.
 - **Getting noticed:** sound + browser notification (works when the tab is in the background) + priority pop-up.
 - **Acknowledge:** an alert stays highlighted until someone acknowledges it; who and when is stored.
-- **Escalation:** a CRITICAL not acknowledged within `ack_timeout_s` is re-sent to admin, marked "no response".
+- **Escalation** (`events/escalation.py` — `AckTracker`, API process, **wall clock** since acks are human time): any
+  CRITICAL not acknowledged within `ack_timeout_s` is re-sent **once** to admin as an `escalation` message; the DB
+  event's details get `escalated: "no response"` and `escalated_at`.
 - **KakaoTalk (optional):** the messenger Koreans actually use. Demo: Kakao Developers "send to me" API with the
   operator's own token. Production: business channel + AlimTalk (알림톡). Sends text + a link to the event,
   not the photo, so snapshots stay on the platform.
 
-Notifiers: `console`, `platform` (WebSocket push per role), `kakao`.
+Notifiers: `console`, `platform`, `kakao`. `PlatformNotifier` runs in the camera worker and only forwards the event to
+the API process; role routing (`notifiers.routes`, roles `security` / `admin`) happens there.
 
 ### 2.9 Verification (`src/sumteo/verify/vlm.py`) — optional
 For CRITICAL events only, send the **face-blurred** snapshot to a vision LLM:
@@ -329,23 +334,34 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
   per zone per second (when `int(ts)` changes) and every event as it fires. While the camera has a health problem no
   `crowd_metrics` rows are written — an honest gap, not stale rows.
 - `Pipeline.run(on_frame=None)` — per-frame callback `(ts, metrics, events)`, used by `eval_crowd.py` and the Day 5 API.
-- `api/server.py` — FastAPI
+- **Two clocks:** `Event.ts` and `crowd_metrics.ts` stay the video clock; `Event.created_at` / `events.created_at` and
+  `crowd_metrics.wall_ts` are wall-clock epoch seconds (latency, acks, `?since=`).
+- `api/server.py` — FastAPI (`create_app()`, started by `scripts/serve.py --cameras a.yaml b.yaml`)
   | Endpoint | Purpose |
   |---|---|
-  | `GET /cameras` | camera list + current level per zone + camera health |
-  | `GET /cameras/{id}/stream` | MJPEG stream with overlays |
+  | `GET /cameras` | `[{id, name, health: [problems], demo: {overridden, levels}, zones: [{id, area_m2, level, label, density_ppm2, count, count_source, speed_mps, active: [condition types], thresholds: {yellow, orange, red}}]}]` — zone thresholds include the risk factor; `demo.overridden` = the camera overrides `crowd.levels_ppm2` |
+  | `GET /cameras/{id}/stream` | MJPEG with overlays (blurred frames), scaled to 960 px wide, 15 fps |
   | `GET /events?camera=&severity=` | event history |
-  | `POST /events/{id}/ack` | security / admin acknowledges an alert (role + time stored) |
-  | `GET /metrics/{camera}?since=` | crowd density time series |
-  | `GET /signboard/{zone}` | data for the public signboard page |
-  | `WS /ws?role=security\|admin` | live push of events (filtered by role) + metrics |
+  | `GET /events/{id}` | one event |
+  | `POST /events/{id}/ack` | body `{role}`; the **first ack wins**; stores `acknowledged_by`, `acknowledged_ts` (wall) |
+  | `GET /metrics/{camera}?since=` | crowd density time series; `since` in wall-clock epoch s |
+  | `GET /snapshots/<id>.jpg` | static, blurred event snapshots |
+  | `GET /signboard/{zone}` | `{zone, camera, level, label, message_ko, message_en, demo}` |
+  | `WS /ws?role=security\|admin` | `hello` (all camera states + `open`: unacknowledged WARNING / CRITICAL events routed to that role since the server started — `Storage.open_alerts`), `camera` (one state, every second, all roles), `event` (routed by role), `ack` (all roles), `escalation` (admin) |
 
-### 2.12 Dashboard (`dashboard/`, Next.js)
+### 2.12 Dashboard (`dashboard/`, Next 16, React 19, Tailwind 4, Recharts)
+Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
 - Camera grid with live MJPEG, zone overlays and level labels (color + 관심/주의/경계/심각)
 - **Priority pop-up:** when a camera hits ORANGE/RED its feed jumps to a large view at the top with a sound,
   until acknowledged (Seoul control rooms do the same)
 - Two views: **security** (my zones, big alert cards, Acknowledge — works on a phone) and **admin** (all cameras, pop-ups, history)
-- Alert feed (color by severity, "Acknowledge" button, escalation mark), camera-health badges, sound + browser notification
+- Alert feed (color by severity, "Acknowledge" button, escalation mark), camera-health badges
+- **Pop-ups** (admin modal, security cards) are for WARNING / CRITICAL that arrive live **and** for the open
+  (unacknowledged) ones in `hello`, so a reload, a reconnecting phone or a new admin gets every open alert back as a
+  pop-up with sound. Older history only fills the feed; unacked alerts from earlier server runs stay in the feed.
+  An ack from either role closes the alert for both.
+- **Sound:** Web Audio beeps, unlocked by the login click, or by a "tap to turn on sound" bar after a reload (browsers
+  block audio until the user interacts). **Browser notifications** with `requireInteraction` on CRITICAL.
 - Crowd density chart per zone with level bands
 - Event detail: blurred snapshot, rules that fired, VLM note
 - **Demo tag:** every view that shows a camera's level carries the same red "DEMO THRESHOLDS … (not the real levels)"
@@ -363,15 +379,21 @@ estimated from mobile signals, updated every 5 min with ~15 min delay. Shown nex
 ## 3. Process model
 
 ```
-run_camera.py --camera configs/cameras/crowd_demo.yaml
-   └─ one process per camera: frame loop → perception → analyzer → rule engine → DB + notifiers
-api server (uvicorn)
-   └─ reads SQLite, serves streams/events, pushes WebSocket updates
+scripts/serve.py --cameras a.yaml b.yaml      (uvicorn; create_app() spawns the workers)
+   ├─ camera worker process × N (multiprocessing spawn): frame loop → perception → blur → analyzer → rule engine
+   │     → SQLite + snapshots (written by the worker) ; queue → API:  frame (JPEG, put_nowait — dropped when full)
+   │       · state (1/s) and event (`put_reliably()`: 5 s put timeout, a loud log line every 5 s while the API isn't
+   │         reading, keeps retrying — never dropped, never silent)
+   └─ API process: one reader thread per camera queue → Hub (api/hub.py, in-memory pub/sub) → WebSocket clients
+         + MJPEG; reads SQLite and writes acks through its own connection; AckTracker (escalation)
 dashboard (next dev)
-   └─ talks to API only
+   └─ talks to the API only
+run_camera.py --camera …                       (single camera, local window, no API)
 ```
-Camera workers and the API share state through SQLite + a small in-memory pub/sub
-(start simple; swap to Redis only if you need multiple machines).
+**Why processes, not threads** (measured, Day 5): two cameras as threads in the API ran 4.9 + 3.2 FPS — the
+Python-heavy parts serialize on the GIL; as processes 8.8 + 4.1 FPS (alone 14.9 / 6.6; the shared GPU is the remaining
+cost). File sources loop for the demo (`runtime.loop`, set by the server); the video clock keeps counting across loops.
+Swap the queues + Hub for Redis only if cameras run on several machines.
 
 ---
 
@@ -383,7 +405,9 @@ Camera workers and the API share state through SQLite + a small in-memory pub/su
 | Density model | ~1 run/s |
 | Full pipeline (Day 3, MPS) | measured: crowd_02 15.6 FPS; crossing_demo 8.6 FPS — density (928 ms/run, every 15 frames) is the main cost |
 | Full pipeline + blur (Day 4) | measured: crowd_02 14.9 FPS; crossing_demo 6.6 FPS (without blur 16.5 / 8.6) |
-| Alert latency (level change → dashboard) | < 3 s + debounce |
+| Alert latency (level change → dashboard) | < 3 s + debounce — measured Day 5 (two cameras, `serve.py`): rule firing (`created_at`) → WS client 0.08–1.5 s, both roles; a CRITICAL 0.34 s |
+| Ack → alert closed for both roles | measured Day 5: within 2 s |
+| Unacked CRITICAL → escalation | measured Day 5: re-sent to admin at exactly `ack_timeout_s` (60 s); acked CRITICALs not escalated |
 
 ---
 
@@ -414,7 +438,7 @@ stock footage can't tune ORANGE/RED.
 
 **Held-out result (Day 4, run once):** one 10 s window per clip (clips are 10 s and 12.9 s). Level 2 / 2 GREEN — trivial;
 count MAE 51.0 (system 9 / 17 vs 65 / 63 by eye, about −80%); 0 false alarms in 23 s. The failure is the camera setup,
-not the model: from this height detection finds 1 in 4–7 people, and the switch rule kept detection below 2.5 /m²
+not the model: from this height detection finds 1 in 4–7 people, and the switch rule kept detection below 2.5 /m² (the default then; at 2.0 the result is the same — SH-B read 0.07–0.09 /m²)
 (§2.2). The result stands as measured; the held-out set is **not** re-run with fixed configs — that would turn it into
 tuning data. A fix applies to the next camera.
 
