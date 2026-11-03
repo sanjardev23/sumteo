@@ -108,6 +108,9 @@ better count (crowd_02 zone `main`, 148 m²: detection 13.4 people on average, D
 **Top-down cameras** where YOLO finds almost nobody must set `crowd.switch_density_ppm2: 0` in their camera YAML
 (always density). This is a real camera property, not a demo value: with the default 2.5, `crossing_demo` on real
 thresholds counts 0 people, because NWPU's 0.88 /m² is under the switch and detection finds ~1 person.
+The held-out run confirmed it (§5): crowd_03 / crowd_04 were set up without camera properties, so they used detection
+and counted 9 and 17 people against 65 and 63 by eye (−80%). Afterwards, as a diagnostic only, NWPU on the same frames
+gave 72 and 56 (within ~11%; SH-A 51 / 35, SH-B 24 / 18).
 
 **Density weights per camera:** the default `models.density` is `models/dmcount_shb.pth` (street scenes). Dense
 cameras set `models.density: models/dmcount_sha.pth` in their camera YAML `overrides:` — on the dense Shibuya clip
@@ -163,6 +166,15 @@ someone walking past a line's end crosses its infinite extension. So:
   `tracking.recross_lockout_s` (3.0) updates the side but isn't counted. Why: on crowd_02 every remaining re-count was
   the same ID re-crossing the same line 0.5–1.8 s later. A teleport guard was rejected — far-away foot jitter already
   gives normal tracks single-frame steps of 20+ m/s, so it can't tell these apart
+- **OUT dwell** (Day 4, user decision): an OUT crossing (`into_zone` False) counts only if the track's registered side
+  was the inside side for ≥ `tracking.out_dwell_s` (**2.5**, tuned) before it crossed; IN crossings are unchanged. Why:
+  extra OUTs came from tracks first registered just inside the zone (people first seen after entering, fragments after
+  an ID switch). Applied to OUT only, so the in ÷ out ratio errs slightly **high** — the early-warning side; a dwell on
+  both directions would also drop real INs
+  - tuned on crowd_02's moved line vs the user's count (IN 5, OUT 7–8): 1.5 s → IN 5 / OUT 10; 2.5 s → 5 / 8;
+    3.5 s and 5 s → 5 / 6. One short clip (~13 crossings), so treat 2.5 as a starting value, not a settled one
+  - the **re-cross lockout is applied before the dwell** — otherwise a blocked OUT let an ID-switch flip-flop count as
+    an IN (gave IN 6)
 - no calibration (homography `None`) → line counting is skipped, because the band is in metres; zone timers still work
 
 **`crowd.py` — CrowdAnalyzer → `CrowdMetrics`** (one analyzer per zone, per second)
@@ -228,14 +240,16 @@ becomes an event is the engine's job. Rules not listed with a severity mapping u
 
 Turbulence is used only inside the RED escalation for now (hard to tune as its own rule on stock video).
 
-> **Known limitation — outflow overcounts.** On crowd_02, outflow reads ~40% high (by eye 7–8, system 11): tracks that
-> start just inside the zone and walk out (an out with no matching in) and track fragments near the line. That biases
-> inflow ÷ outflow **low**, so `INFLOW_IMBALANCE` may fire late or not at all — the unsafe direction for an early
-> warning. Line placement matters (DATA.md §2, *Counting lines*).
+> **Known limitation — outflow overcounts.** On crowd_02, outflow read ~40% high before Day 4 (by eye 7–8, system 11):
+> tracks that start just inside the zone and walk out, and track fragments near the line. That biases inflow ÷ outflow
+> **low**, so `INFLOW_IMBALANCE` may fire late or not at all — the unsafe direction for an early warning. The OUT dwell
+> (§2.5) targets this (crowd_02 after tuning: OUT 8 vs 7–8 by eye); line placement matters too (DATA.md §2, *Counting lines*).
 
-> **Known limitation — turbulence is untuned.** It reads 0.4–0.7 even on calm, sparse crowd_02, because people in a
-> station square walk in all directions. With `turbulence_red` 0.6, most ORANGE crowds moving in several directions
-> become RED. This errs toward warning; it can't be tuned without dense stock footage (Day 4).
+> **Known limitation — turbulence is tuned only on calm footage.** People in a square walk in all directions, so calm
+> crowds already read high: smoothed, after the first window, crowd_02 median 0.59 / p95 0.74 and crowd_06 (real
+> thresholds) median 0.61 / p95 0.72, max 0.75 on both. `turbulence_red` was raised 0.6 → **0.8** (Day 4), just above
+> that calm ceiling — a margin of only 0.05. With 0.6, crossing_demo skipped ORANGE (0.67 events per change). Whether
+> 0.8 catches real crowd turbulence is untested: no stock footage shows it.
 
 ### 2.7 Events (`src/sumteo/events/`)
 - `models.py` — `Condition(type, zone_id, track_id, details)`, `Event(id, camera_id, type, severity, ts, zone_id, details, snapshot_path, verified, acknowledged)`
@@ -282,11 +296,39 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 
 ### 2.10 Privacy (`src/sumteo/privacy/blur.py`)
 - Face **detection** only (to blur), never face **recognition**. No identities are stored.
+- **What is blurred:** faces **and** heads.
+  - YuNet (OpenCV `FaceDetectorYN`, MIT, ~230 KB onnx in `models/`) finds close faces. It runs at half size
+    (crowd_02 32 → 8 ms, crossing 76 → 19 ms); the small faces this loses already get the head band, and what only
+    YuNet catches are large, close faces of people YOLO misses.
+  - The top `privacy.head_fraction` (0.2) of every YOLO person box is blurred too: in high shots faces are 5–15 px,
+    too small for any face detector.
+  - **Cameras with a density-counted zone** (user decisions): YOLO finds only a fraction of people there (~1 in 4 on
+    crossing_demo), so the **whole frame** gets a soft Gaussian — people outside the zone too. Sigma = half a head,
+    head = `privacy.head_size_m` (0.25) converted to px at each density-counted zone's centre via the homography; the
+    largest of those sigmas is used (crossing_demo ~3.8 px). Faces are gone; the crowd's shape stays visible.
+  - **Box blur** (faces, head bands) is a fixed-cost anonymize, not a Gaussian: shrink the padded box to 6 px across
+    (`INTER_AREA`), scale back up (`INTER_LINEAR`). Why: large boxes (big padded head bands / face boxes) made huge Gaussian kernels (crossing_demo fell to
+    2.3 FPS); no detail survives 6 px, so privacy is the same or stronger.
+  - The masked blur uses `cv2.copyTo`, not numpy boolean indexing (full frame 6.6 ms).
+  - **Known limitation:** on detection-counted cameras (crowd_02), people the tracker never picks up (far background,
+    faces ~4 px) are not blurred — the head band only covers tracked boxes. Not identifiable at that size, but no
+    rule covers them.
+  - On a frozen feed the frame is blurred with the last known boxes.
+- **Where:** right after perception, before the overlay, whenever `privacy.blur_faces` is on. Detection, density and
+  flow see the raw frame. Order inside `FaceBlur.apply`: YuNet on the **raw** frame (half size) → soft frame / zone
+  blur → anonymize over faces + head bands. Everything downstream — window, `--save` video, snapshots, the Day 5 MJPEG stream — gets the
+  blurred one. Overlay text stays sharp on top.
+- **Snapshot:** on each event, the blurred frame with its overlay is saved as JPEG to
+  `events.snapshot_dir/<event id>.jpg` and `event.snapshot_path` is set.
 - Snapshots are blurred before they are saved, shown on the platform or sent to a VLM. KakaoTalk gets a link, not the photo.
 - Raw video is not stored by default — only event snapshots.
 
 ### 2.11 Storage and API
 - `storage/db.py` — SQLite tables: `events`, `crowd_metrics` (1 row per zone per second).
+  `Storage(path)` with `add_event(event)` and `add_metrics(camera_id, metrics)`; the pipeline writes `crowd_metrics` once
+  per zone per second (when `int(ts)` changes) and every event as it fires. While the camera has a health problem no
+  `crowd_metrics` rows are written — an honest gap, not stale rows.
+- `Pipeline.run(on_frame=None)` — per-frame callback `(ts, metrics, events)`, used by `eval_crowd.py` and the Day 5 API.
 - `api/server.py` — FastAPI
   | Endpoint | Purpose |
   |---|---|
@@ -340,6 +382,7 @@ Camera workers and the API share state through SQLite + a small in-memory pub/su
 | Detection + tracking (YOLO26n, 1280) | ≥ 15 FPS (measured 17–28 FPS on the Day 1 clips) |
 | Density model | ~1 run/s |
 | Full pipeline (Day 3, MPS) | measured: crowd_02 15.6 FPS; crossing_demo 8.6 FPS — density (928 ms/run, every 15 frames) is the main cost |
+| Full pipeline + blur (Day 4) | measured: crowd_02 14.9 FPS; crossing_demo 6.6 FPS (without blur 16.5 / 8.6) |
 | Alert latency (level change → dashboard) | < 3 s + debounce |
 
 ---
@@ -350,9 +393,36 @@ Camera workers and the API share state through SQLite + a small in-memory pub/su
 |---|---|---|
 | Crowd counting | ShanghaiTech Part B test | MAE, RMSE |
 | Dense crowd counting | ShanghaiTech Part A test | MAE, RMSE |
-| Crowd levels | Pexels crowd videos (manual labels per 10 s) | level accuracy |
+| Crowd levels | Pexels crowd videos (manual people counts per window → level) | level accuracy, off by > 1 level, count MAE |
 | Alerts | labeled crowd videos | events per level change, false alarms per hour, time-to-alert |
 | Rules (stagnation, rise, inflow, …) | **unit tests with fake metric sequences** | fires when it should, quiet when it shouldn't |
+
+**Ground truth (Day 4, user decision):** people are counted by eye in each zone, on zoomed grid cells of the window's
+midpoint frame, without looking at the system's output. The developer agent counts; the user spot-checks the densest
+frames. Label level = count ÷ zone area, by the thresholds the run uses (real for crowd_02/03/04; the camera's demo
+thresholds for crossing_demo, marked as demo). Windows are 10 s; crowd_06 gets 2 s so time-to-alert has usable resolution.
+Because labels and system share the zone area, the level check tests **counting**, not the calibration (±20% area).
+**Label noise ≈ ±15%:** the user counted 3 frames independently, before seeing the labels — crowd_02 15 s: 20 vs agent 23;
+crowd_06 15 s: 78 vs 69; crowd_04 5 s (held-out): 58 vs 63. Differences of 8–15% go both ways, so no clear bias in
+these 3 checks (too few to rule one out). Labels are kept as first counted, not swapped. A count-MAE difference
+smaller than ~15% of the count can't be told apart from label noise.
+
+**Split:** tuning = crowd_02 + crowd_06; held-out = crowd_03 + crowd_04 (`test_crowd_03.yaml`, `test_crowd_04.yaml`, real
+thresholds, no overrides), run **once** after tuning. crowd_05 stays out (moving view). Tuned on 02 + 06 only:
+`out_dwell_s` (→ 2.5) and `turbulence_red` (→ 0.8, above the calm ceiling of 0.75; §2.5, §2.6). Level thresholds stay Fruin —
+stock footage can't tune ORANGE/RED.
+
+**Held-out result (Day 4, run once):** one 10 s window per clip (clips are 10 s and 12.9 s). Level 2 / 2 GREEN — trivial;
+count MAE 51.0 (system 9 / 17 vs 65 / 63 by eye, about −80%); 0 false alarms in 23 s. The failure is the camera setup,
+not the model: from this height detection finds 1 in 4–7 people, and the switch rule kept detection below 2.5 /m²
+(§2.2). The result stands as measured; the held-out set is **not** re-run with fixed configs — that would turn it into
+tuning data. A fix applies to the next camera.
+
+**`eval_crowd.py --levels --labels data/processed/crowd_levels.csv --cameras <yamls>`:** one headless run per labeled
+video with the camera matched by source file. Per window, the system's level and count at the labeled midpoint frame
+→ level accuracy, off by > 1 level, count MAE. Alerts: level-change events per labeled change; false alarms per hour
+(ORANGE/RED events on GREEN/YELLOW-labeled time), always reported **with the total footage length** (it's only minutes);
+mean time-to-alert from the first labeled window at a new level to the first `CROWD_LEVEL` event at or above that severity.
 
 Stock videos rarely show a real ORANGE/RED crush or a stuck crowd. So: real videos test counting, density and
 "no false alarms at low levels"; fake metric sequences prove the rules; demo overrides show the full GREEN → RED path.

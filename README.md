@@ -63,6 +63,11 @@ counter-flow and more-in-than-out, plus camera health (lost / frozen / dark; zon
 Measured: calm footage fires nothing; a paused-then-covered test clip raises one camera alert; line inflow on the demo
 clip matches a manual count (5 vs 5), outflow over-counts (11 vs 7–8).
 
-Next, Day 4: level accuracy on labeled clips, face blur, SQLite event storage.
+Day 4 done: faces and heads are blurred before anything is shown or saved, every alert is stored in SQLite with a
+blurred snapshot, and the system was measured on hand-counted clips (`docs/results.md`). Stock footage is all GREEN by
+Fruin, so levels match trivially; on the demo thresholds each level change raises one alert ~2.7 s later. The
+held-out clips showed that high, top-down cameras under-count (~80%) unless set up to use the density model.
+
+Next, Day 5: API, in-platform alerts and the dashboard.
 
 Bridge mode (railing / climbing detection) was split out and is kept in `../bridge-safety-ai/`.

@@ -26,13 +26,18 @@ people (§2.2, `crossing_demo`).
 
 - **Pexels / Pixabay** free stock videos — search: "crowd", "festival crowd", "crowded street", "shibuya crossing", "concert crowd", "subway station rush hour". Their licenses allow free use, including in a demo video.
 - Pick 3–5 videos with a **high, fixed camera** (CCTV-like). Handheld/moving cameras break optical flow and calibration.
-- Label manually for level testing: every 10 s → `GREEN/YELLOW/ORANGE/RED` in `data/processed/crowd_levels.csv`:
+- Label for level testing in `data/processed/crowd_levels.csv`: per window, the people **count** in each zone by eye
+  (zoomed grid cells of the window's midpoint frame, without looking at the system's output), and the level derived
+  from count ÷ zone area with the thresholds that run uses (ARCHITECTURE §5). Windows are 10 s; crowd_06 uses 2 s.
   ```csv
-  video,start_s,end_s,level
-  crowd_01.mp4,0,10,GREEN
-  crowd_01.mp4,10,20,YELLOW
+  video,start_s,end_s,count,level
+  crowd_02.mp4,0,10,14,GREEN
+  crowd_02.mp4,10,20,15,GREEN
   ```
-- Keep 1–2 videos as a held-out test set; tune thresholds only on the others.
+  (illustrative rows). Who counted is recorded: the developer agent counts, the user spot-checks some frames
+  independently. Day 4 spot-checks differed by 8–15% both ways, so labels carry about **±15%** counting noise
+  (ARCHITECTURE §5). Labels are kept as first counted, never swapped after a spot-check.
+- **Split:** tuning = crowd_02 + crowd_06; held-out = crowd_03 + crowd_04, run **once** after tuning. crowd_05 is out.
 
 Clips in use (all stock, none of a real disaster):
 
@@ -40,14 +45,17 @@ Clips in use (all stock, none of a real disaster):
 |---|---|---|
 | crowd_01 | — | people ~26 px wide, too small for stable IDs |
 | crowd_02 | `crowd_demo.yaml` | Day 1 demo: tracking, speeds, line crossings |
-| crowd_05 | — | dense Shibuya, but the view moves, so a fixed zone slides over the ground |
+| crowd_03 | `test_crowd_03.yaml` | held-out; same plaza as crowd_04, from above; real thresholds, no overrides — run once (Day 4); YOLO finds 1 in 4–7 people here |
+| crowd_04 | `test_crowd_04.yaml` | held-out; real thresholds, no overrides — run once (Day 4) |
+| crowd_05 | — | dense Shibuya, but the view moves, so a fixed zone slides over the ground; not evaluated |
 | crowd_06 | `crossing_demo.yaml` | Day 2 dense demo: [Pexels 37570306](https://www.pexels.com/video/aerial-view-of-shibuya-crossing-in-tokyo-37570306/), Shibuya scramble from a tall building, crosswalks filling over 21.6 s; stabilized (below) |
 
 None of crowd_01–05 shows density rising, which is why crowd_06 was added.
 
 **Stabilizing hand-held stock clips** — `scripts/stabilize_video.py`, a one-time prep step for stock clips only (real
 CCTV is fixed). It aligns every frame to frame 0 (ORB + RANSAC, translation only), crops the uncovered border and
-resizes. crowd_06 (4K portrait, ~7% drift, no zoom) → 1080×2046, residual shift < 1 px.
+resizes. crowd_06 (4K portrait, ~7% drift, no zoom) → 1080×2046, residual shift < 1 px. crowd_03 / crowd_04 (10–13 px
+drift, no zoom) → 1920×1070; the originals are kept as `crowd_03_orig.mp4` / `crowd_04_orig.mp4`.
 
 ### Calibrating stock videos (scale is an estimate)
 Stock footage has no object of known size, so the ground square's real size is **estimated, not measured**:
@@ -60,9 +68,17 @@ Uncertainty is about ±10% in length and speed (mostly the 1.65 m assumption), s
 (area scales with length squared).
 The independent sanity check is the Day 1 walking speed (~1.0–1.5 m/s). Record each camera's estimate here.
 
+**When the two-VP method can't work** (crowd_03 / crowd_04): the cross lines are horizontal in the image, so their
+vanishing point is at infinity and the focal length can't be solved from two VPs. Instead: horizon = the row of the
+receding lines' VP; focal = the value that makes person heights independent of distance; scale from 1.65 m people.
+The focal length is only weakly constrained above ~2400 px, so crowd_03 (f ≈ 2800) may be off by more than the usual
+±20% in area — the walking-speed check is the guard.
+
 | Camera | Ground square | Zone area | Lines | Basis |
 |---|---|---|---|---|
 | `crowd_demo` (crowd_02) | 6 × 6 m (reprojects to 36.0 m²) | `main` 148.3 m² | entry (602,510)–(1104,571), 12.9 m (was 13.8 m; clipped to the zone's slanted sides): moved 2.5 m from the zone's far edge toward its centre on Day 3 (see *Counting lines*) | vanishing points → focal ≈ 1243 px (55° HFOV), height ≈ 6.5 m; scale from 477 person boxes |
+| `test_crowd_03` (crowd_03) | 6 × 6 m (from the metrology) | `plaza` 269.2 m² (planned 264.4; one corner 2 px off) | — | horizon + "person height independent of distance" → f ≈ 2800 px, tilt 36°, camera ≈ 35 m; scale from 1.65 m people; check: walking 1.23 m/s |
+| `test_crowd_04` (crowd_04) | 6 × 6 m (from the metrology) | `plaza` 312.8 m² | — | same method → f ≈ 2300 px, tilt 29°, camera ≈ 26 m; check: walking 1.13 m/s |
 | `crossing_demo` (crowd_06) | 6 × 6 m, image (273,852) (447,852) (451,998) (261,998); 1 m grid follows the zebra stripes | `crossing` 79.4 m² (first estimate 85.9 m², ~8% tighter after the guided click — within ±10%) | none | zebra stripes: 45 cm stripe + 45 cm gap = 0.9 m period (Japanese standard), measured by FFT on two crosswalks at the same image height; local affine fit ~33 px/m across, ~25 px/m up/down, tilt ≈ 49°, crosswalks 31° apart; scale grows ~13% from y 780 to 1220; check: shoulders ≈ 13 px ≈ 0.45 m |
 
 **Counting lines** — put them where people stay tracked on **both** sides, closer to the camera than the zone's far

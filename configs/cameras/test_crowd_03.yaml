@@ -1,0 +1,25 @@
+# calibration and zones are written by scripts/calibrate.py; risk flags are edited by hand
+id: test-crowd-03
+name: Station plaza from above, crowd_03 (held-out test)
+source: data/raw/crowd_03.mp4
+calibration:
+  image_points:
+  - [1021.0, 263.0]
+  - [1269.0, 265.0]
+  - [1289.0, 402.0]
+  - [1022.0, 402.0]
+  world_points:
+  - [0.0, 0.0]
+  - [6.0, 0.0]
+  - [6.0, 6.0]
+  - [0.0, 6.0]
+zones:
+- id: plaza
+  polygon:
+  - [900.0, 190.0]
+  - [1700.0, 190.0]
+  - [1720.0, 510.0]
+  - [880.0, 510.0]
+  risk: {slope: false, narrow: false, bottleneck: false}
+  entry_line: []
+  exit_line: []
