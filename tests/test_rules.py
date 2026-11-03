@@ -11,7 +11,7 @@ from sumteo.perception.flow import ZoneFlow
 
 DEFAULT = yaml.safe_load((Path(__file__).resolve().parents[1] / "configs/default.yaml").read_text())
 CFG, EVENTS = DEFAULT["crowd"], DEFAULT["events"]
-AREA = 100.0   # m², so a count of 300 = 3.0 people/m² (YELLOW, above the 2.5 switch → density count)
+AREA = 100.0   # m², so a count of 300 = 3.0 people/m² (YELLOW, above the switch → density count)
 STEP = 0.5     # two updates per second
 
 
@@ -78,7 +78,8 @@ def test_stagnation_timer_runs_across_a_count_source_switch():
     # Density hovering at the switch: the speed source flips every update, but both say "stuck".
     analyzer, types = _analyzer(), []
     for i in range(round((CFG["stagnation_seconds"] + 2) / STEP)):
-        count = 260.0 if i % 2 else 240.0                                                # 2.6 ↔ 2.4 /m², YELLOW
+        switch = CFG["switch_density_ppm2"]
+        count = (switch - 0.1 if i % 2 else switch + 0.1) * AREA                         # ±0.1 /m² around it, YELLOW
         m = analyzer.update(i * STEP, int(count), count, median_speed_mps=0.05, flow=ZoneFlow(speed_mps=0.1))
         types.append({c.type for c in analyzer.conditions(m)})
     assert EventType.STAGNATION in types[-1]

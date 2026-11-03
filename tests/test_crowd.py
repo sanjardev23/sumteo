@@ -48,7 +48,7 @@ def test_turbulence_turns_orange_red_without_moving_the_base_level():
 def test_hybrid_count_switches_to_density_only_when_dense():
     analyzer = CrowdAnalyzer(CFG, "z", zone_area_m2=100.0)
     assert analyzer.update(0.0, detection_count=40, density_count=None).count_source == "detection"
-    sparse = analyzer.update(0.1, detection_count=40, density_count=60.0)   # density says 0.6 /m² < 2.5
+    sparse = analyzer.update(0.1, detection_count=40, density_count=60.0)   # density says 0.6 /m², below the switch
     assert (sparse.count, sparse.count_source) == (40, "detection")
     dense = analyzer.update(0.2, detection_count=90, density_count=300.0)   # 3.0 /m²: detection is saturating
     assert (dense.count, dense.count_source) == (300.0, "density")

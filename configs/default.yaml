@@ -23,7 +23,8 @@ tracking:
   out_dwell_s: 2.5       # an OUT counts only after the track was inside this long (IN is never held back); tuned on crowd_02
 
 crowd:
-  switch_density_ppm2: 2.5        # above this, trust the density model over detection
+  switch_density_ppm2: 2.0        # from this up, the density model counts; at or below YELLOW, because detection
+                                  # under-counts overlapping people (crowd_02: 13 vs 17, 14 vs 23)
   smoothing_s: 5                  # density = median over this window
   levels_ppm2: {yellow: 2.0, orange: 4.0, red: 5.0}
   hysteresis_ppm2: 0.4            # a level is left only when density drops this far below its threshold
