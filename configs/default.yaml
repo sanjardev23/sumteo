@@ -18,6 +18,7 @@ tracking:
   speed_window_s: 1.0    # smoothing window for speed
   still_speed_mps: 0.3   # below this a person counts as "standing still"
   line_band_m: 0.3       # a side of a counting line registers only this far from it (no jitter counts)
+  recross_lockout_s: 3.0 # a track re-crossing the same line within this is an ID switch, not a person
 
 crowd:
   switch_density_ppm2: 2.5        # above this, trust the density model over detection
@@ -34,14 +35,17 @@ crowd:
   rise_ppm2_per_min: 1.0          # density growing faster than this = DENSITY_RISING
   rise_min_density: 2.0
   counter_flow_warn: 0.3
+  flow_moving_mps: 0.3            # optical-flow points slower than this are "not moving" (turbulence / counter-flow)
   inflow_window_s: 60
   inflow_ratio: 2.0               # inflow / outflow above this = INFLOW_IMBALANCE
   inflow_min_per_min: 30          # ignore imbalance when very few people cross
 
 camera_health:
   frozen_seconds: 5               # no pixel change this long = frozen feed
+  frozen_diff_below: 0.5          # mean abs gray change per frame below this = "no pixel change"
   dark_mean_below: 15             # mean gray level (0–255) below this = dark / covered
   reconnect_attempts: 3
+  reconnect_wait_s: 1.0           # pause between reconnect attempts of a live feed
 
 events:
   debounce_s: 1.0

@@ -22,8 +22,8 @@ zones:
   - [500.0, 710.0]
   risk: {slope: false, narrow: false, bottleneck: false}
   entry_line:
-  - [620.0, 492.0]
-  - [1120.0, 548.0]
+  - [602.0, 510.0]
+  - [1104.0, 571.0]
   exit_line: []
 overrides:
   crowd:

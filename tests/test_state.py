@@ -99,3 +99,29 @@ def test_one_frame_foot_jumps_do_not_count():
     store = _store()
     path = [(3 + 0.8 * i / FPS, 4.0 if i % 5 else 5.5) for i in range(5 * FPS)]
     assert _run(store, path) == []
+
+
+def _lockout_store() -> TrackStore:
+    return TrackStore(lost_after_s=2.0, speed_window_s=1.0, still_speed_mps=0.3, line_band_m=0.3, recross_lockout_s=3.0)
+
+
+def test_id_switch_ping_pong_on_the_line_counts_once():
+    # Across the line, then (an ID switch to a neighbour) back across 1 s later: the second one is locked out.
+    store = _lockout_store()
+    path = _walk((5, 3), (0, 2.0), seconds=2) + _walk((5, 7), (0, -4.0), seconds=1)
+    assert len(_run(store, path)) == 1
+
+
+def test_a_real_return_after_the_lockout_counts():
+    store = _lockout_store()
+    assert len(_run(store, _walk((5, 3), (0, 1.2), seconds=4))) == 1
+    assert len(_run(store, _walk((5, 7.8), (0, -1.2), seconds=4), t0=4.0)) == 1
+
+
+def test_into_zone_means_toward_the_zone_center():
+    # Zone is y 0–6 m; its entry line runs along y = 5 m, so walking toward y = 3 m (the center) is inflow.
+    zone = ZoneShape("z", Polygon([(0, 0), (1000, 0), (1000, 600), (0, 600)]), {"z:entry": Line((200, 500), (800, 500))})
+    inward = _run(_store(), _walk((5, 6.5), (0, -1.2), seconds=3), zones=(zone,))
+    outward = _run(_store(), _walk((5, 3.5), (0, 1.2), seconds=3), zones=(zone,))
+    assert [c.into_zone for c in inward] == [True]
+    assert [c.into_zone for c in outward] == [False]

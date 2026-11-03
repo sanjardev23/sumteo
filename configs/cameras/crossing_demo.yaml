@@ -29,3 +29,5 @@ overrides:
     levels_ppm2: {yellow: 0.3, orange: 0.6, red: 0.75}
     hysteresis_ppm2: 0.06
     switch_density_ppm2: 0.0
+    rise_ppm2_per_min: 0.15
+    rise_min_density: 0.3
