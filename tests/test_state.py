@@ -125,3 +125,24 @@ def test_into_zone_means_toward_the_zone_center():
     outward = _run(_store(), _walk((5, 3.5), (0, 1.2), seconds=3), zones=(zone,))
     assert [c.into_zone for c in inward] == [True]
     assert [c.into_zone for c in outward] == [False]
+
+
+SHALLOW_ZONE = ZoneShape("z", Polygon([(0, 0), (1000, 0), (1000, 600), (0, 600)]), {"z:entry": Line((200, 500), (800, 500))})
+
+
+def _dwell_store() -> TrackStore:
+    return TrackStore(lost_after_s=2.0, speed_window_s=1.0, still_speed_mps=0.3, line_band_m=0.3, out_dwell_s=1.5)
+
+
+def test_out_needs_the_track_to_have_been_inside_first():
+    # First seen 1 m inside the line, walks straight out: registered inside for < 1.5 s → not an OUT.
+    quick = _run(_dwell_store(), _walk((5, 4.0), (0, 1.2), seconds=3), zones=(SHALLOW_ZONE,))
+    # Walks around inside for 3 s first, then out: a real OUT.
+    settled = _run(_dwell_store(), [(5, 3.5)] * (3 * FPS) + _walk((5, 3.5), (0, 1.2), seconds=3), zones=(SHALLOW_ZONE,))
+    assert quick == []
+    assert [c.into_zone for c in settled] == [False]
+
+
+def test_in_is_never_held_back_by_the_dwell():
+    quick_in = _run(_dwell_store(), _walk((5, 6.0), (0, -1.2), seconds=3), zones=(SHALLOW_ZONE,))   # 1 m outside
+    assert [c.into_zone for c in quick_in] == [True]

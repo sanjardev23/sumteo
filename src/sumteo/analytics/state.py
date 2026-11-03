@@ -1,4 +1,5 @@
-"""Days 1, 3 — per-track history: speed (m/s), still time, time per zone, line crossings (Day 3: lockout, inflow side)."""
+"""Days 1, 3, 4 — per-track history: speed (m/s), still time, time per zone, line crossings (Day 3: lockout, inflow side;
+Day 4: OUT dwell)."""
 from __future__ import annotations
 
 import math
@@ -21,6 +22,7 @@ class TrackState:
     seconds_in_zone: dict[str, float] = field(default_factory=dict)  # zone id → seconds inside it
     last_side: dict[str, int] = field(default_factory=dict)          # line id ("<zone>:entry" / "<zone>:exit") → last Line.side()
     last_flip: dict[str, float] = field(default_factory=dict)        # line id → ts of the last side change on the segment
+    side_since: dict[str, float] = field(default_factory=dict)       # line id → ts the registered side was first seen
 
 
 @dataclass
@@ -34,12 +36,13 @@ class Crossing:
 
 class TrackStore:
     def __init__(self, lost_after_s: float, speed_window_s: float, still_speed_mps: float, line_band_m: float,
-                 recross_lockout_s: float = 0.0):
+                 recross_lockout_s: float = 0.0, out_dwell_s: float = 0.0):
         self.lost_after_s = lost_after_s
         self.speed_window_s = speed_window_s
         self.still_speed_mps = still_speed_mps
         self.line_band_m = line_band_m
         self.recross_lockout_s = recross_lockout_s
+        self.out_dwell_s = out_dwell_s
         self.tracks: dict[int, TrackState] = {}
         self.crossing_counts: dict[str, dict[int, int]] = {}  # line id → {+1: n, -1: n}
 
@@ -116,13 +119,23 @@ class TrackStore:
             side = line.side(foot_m)
             previous = track.last_side.get(line_id)
             track.last_side[line_id] = side
+            since = track.side_since.get(line_id)
+            if side != previous:
+                track.side_since[line_id] = ts
             if previous is None or side == previous or not line.within_ends(foot_m):
                 continue
             # An ID switch in a group standing on the line flips the side back and forth within a second or two.
             last_flip = track.last_flip.get(line_id)
             track.last_flip[line_id] = ts
-            if last_flip is None or ts - last_flip >= self.recross_lockout_s:
-                found.append(Crossing(ts, line_id, track.track_id, side, into_zone=side == inward.get(line_id)))
-                counts = self.crossing_counts.setdefault(line_id, {1: 0, -1: 0})
-                counts[side] += 1
+            if last_flip is not None and ts - last_flip < self.recross_lockout_s:
+                continue
+            into_zone = side == inward.get(line_id)
+            # A track first seen just inside the zone (a late detection, a fragment after an ID switch) and walking
+            # out is an OUT with no matching IN; only count OUT after the track was inside for out_dwell_s.
+            # IN is never held back: a missed IN would hide a filling zone.
+            if not into_zone and ts - since < self.out_dwell_s:
+                continue
+            found.append(Crossing(ts, line_id, track.track_id, side, into_zone=into_zone))
+            counts = self.crossing_counts.setdefault(line_id, {1: 0, -1: 0})
+            counts[side] += 1
         return found
