@@ -1,0 +1,7 @@
+# The API image needs only pyproject, src, configs and scripts/serve.py; recordings are mounted at run time.
+*
+!pyproject.toml
+!src/
+!configs/
+!scripts/serve.py
+**/__pycache__

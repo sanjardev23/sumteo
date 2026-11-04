@@ -1,0 +1,21 @@
+# Day 6 — replay-only demo (ARCHITECTURE §2.11, §3): `docker compose up --build`, then http://localhost:3000.
+# Needs data/recordings/ (README → Recordings) and dashboard/.env.local with your Kakao Maps key (README → Map key).
+services:
+  api:
+    build: .
+    environment:
+      SEOUL_API_KEY: ${SEOUL_API_KEY:-}             # optional city data (§2.13), read from .env next to this file
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data/recordings:/app/data/recordings:ro   # the recorded runs, read-only
+      - sumteo-data:/app/data                       # this demo's own SQLite and snapshots, apart from a native run's
+  dashboard:
+    build: ./dashboard
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  sumteo-data:
