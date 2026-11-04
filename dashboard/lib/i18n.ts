@@ -85,6 +85,9 @@ const EN = {
     ALL_CLEAR: "All clear",
   } as Record<string, string>,
   camerasOnlineTicker: "cameras online · stock clips at demo positions",
+  replayTag: "REPLAY — recorded run",
+  replayShort: "REPLAY",
+  modeCount: (live: number, replay: number) => `${live} live, ${replay} replay`,
 };
 
 export type Dict = typeof EN;
@@ -138,6 +141,9 @@ const KO: Dict = {
     ALL_CLEAR: "해제",
   },
   camerasOnlineTicker: "대 가동 · 스톡 영상, 데모 위치",
+  replayTag: "재생 — 녹화된 실행",
+  replayShort: "재생",
+  modeCount: (live: number, replay: number) => `실시간 ${live}, 재생 ${replay}`,
 };
 
 export const dict: Record<Lang, Dict> = { en: EN, ko: KO };

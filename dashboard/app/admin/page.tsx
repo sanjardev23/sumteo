@@ -59,6 +59,7 @@ export default function Admin() {
       color: level ? LEVEL_COLOR[level] : "#9AA4B2",
       label: cameraLabel(c, c.id),
       value: d != null ? `${d.toFixed(1)}/m²` : undefined,
+      tag: c.mode === "replay" ? t.replayShort : undefined,
       pulse: level === "RED",
     };
   });
@@ -187,7 +188,8 @@ export default function Admin() {
           )}
         </span>
         <span className="shrink-0 text-[#5B6675]">
-          {live.cameras.filter((c) => !c.health.length).length} {t.camerasOnlineTicker}
+          {live.cameras.filter((c) => !c.health.length).length} {t.camerasOnlineTicker} ·{" "}
+          {t.modeCount(live.cameras.filter((c) => c.mode !== "replay").length, live.cameras.filter((c) => c.mode === "replay").length)}
         </span>
       </footer>
 

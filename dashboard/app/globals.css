@@ -44,6 +44,18 @@ body {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+.sumteo-pin-tag {
+  margin-left: 2px;
+  padding: 1px 4px;
+  border: 1px solid #8a94a3;
+  border-radius: 3px;
+  background: #f1f3f6;
+  color: #3a4553;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+}
 .sumteo-pin.is-selected .sumteo-pin-dot {
   border: 2px solid #1d4f91;
 }

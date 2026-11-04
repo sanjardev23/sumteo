@@ -25,6 +25,7 @@ export interface Camera {
   zones: Zone[];
   health: string[];
   location: { lat: number; lon: number; label: string; clip: string } | null;
+  mode?: "live" | "replay"; // Day 6: replay = a recorded run (§2.11), never live inference
   demo: { overridden: boolean; levels: { yellow: number; orange: number; red: number } | null };
 }
 
@@ -42,6 +43,7 @@ export interface SumteoEvent {
   acknowledged_by: string | null;
   acknowledged_ts: number | null;
   created_at: number;
+  replay?: boolean;
 }
 
 export interface MetricRow {

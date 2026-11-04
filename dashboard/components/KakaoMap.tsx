@@ -39,6 +39,7 @@ export interface Pin extends LatLon {
   color: string;
   label: string;
   value?: string;
+  tag?: string; // e.g. "REPLAY": shown after the value
   pulse?: boolean;
 }
 
@@ -125,7 +126,8 @@ export function KakaoMap({
       o.el.className = `sumteo-pin${p.id === selected ? " is-selected" : ""}${p.pulse ? " is-pulse" : ""}`;
       o.el.innerHTML =
         `<span class="sumteo-pin-dot" style="--c:${p.color}"></span>` +
-        `<span class="sumteo-pin-label">${esc(p.label)}${p.value ? ` <b>${esc(p.value)}</b>` : ""}</span>`;
+        `<span class="sumteo-pin-label">${esc(p.label)}${p.value ? ` <b>${esc(p.value)}</b>` : ""}` +
+        `${p.tag ? ` <i class="sumteo-pin-tag">${esc(p.tag)}</i>` : ""}</span>`;
     }
     for (const [id, o] of overlays.current)
       if (!seen.has(id)) {

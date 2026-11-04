@@ -64,6 +64,15 @@ export function LiveDot({ connected, t }: { connected: boolean; t: Dict }) {
   );
 }
 
+/** Every view of a replayed camera says so (§2.11): a recorded run is never shown as live inference. */
+export function ReplayTag({ t, short = false }: { t: Dict; short?: boolean }) {
+  return (
+    <span className="rounded border border-[#8A94A3] bg-[#F1F3F6] px-1.5 py-px text-[10px] font-semibold tracking-wide text-[#3A4553]">
+      {short ? t.replayShort : t.replayTag}
+    </span>
+  );
+}
+
 export function LevelTag({ level, t }: { level: Level | null; t: Dict }) {
   if (!level) return <span className="rounded bg-[#EEF1F4] px-1.5 py-0.5 text-[11px] text-[#5B6675]">{t.notCalibrated}</span>;
   const dark = level === "YELLOW" || level === "ORANGE";
@@ -173,6 +182,11 @@ export function EventList({
                   {noResponse && (
                     <span className="ml-1.5 rounded bg-[#C62828] px-1 text-[10px] font-semibold text-white">{t.noResponse}</span>
                   )}
+                  {e.replay && (
+                    <span className="ml-1.5">
+                      <ReplayTag t={t} short />
+                    </span>
+                  )}
                 </div>
               </div>
             </li>
@@ -247,7 +261,7 @@ export function CameraCard({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img src={streamUrl(camera.id)} alt={camera.name} className="aspect-video w-full object-contain" />
         <span className="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] font-medium text-white">
-          ● LIVE · {t.blurred}
+          {camera.mode === "replay" ? t.replayTag : "● LIVE"} · {t.blurred}
         </span>
       </button>
       <div className="space-y-2 p-3">
@@ -255,6 +269,11 @@ export function CameraCard({
           <div className="min-w-0">
             <h3 className="text-[14px] font-semibold leading-snug">{cameraLabel(camera, camera.id)}</h3>
             <p className="text-[11px] leading-snug text-[#5B6675]">{camera.location?.clip || camera.name}</p>
+            {camera.mode === "replay" && (
+              <div className="mt-1">
+                <ReplayTag t={t} />
+              </div>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
             <LevelTag level={worstLevel(camera)} t={t} />
@@ -500,6 +519,11 @@ export function BigCamera({
           )}
           <h2 className="text-[18px] font-semibold">{cameraLabel(camera, camera.id)}</h2>
           <p className="text-[12px] text-[#5B6675]">{camera.location?.clip || camera.name}</p>
+          {camera.mode === "replay" && (
+            <div className="mt-1">
+              <ReplayTag t={t} />
+            </div>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <LevelTag level={worstLevel(camera)} t={t} />
