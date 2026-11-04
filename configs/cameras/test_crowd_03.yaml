@@ -2,6 +2,7 @@
 id: test-crowd-03
 name: Station plaza from above, crowd_03 (held-out test)
 source: data/raw/crowd_03.mp4
+location: {lat: 37.53452, lon: 126.99345, label: "Itaewon-ro at Exit 1", clip: "stock clip (station plaza from above, Pexels), demo position"}
 calibration:
   image_points:
   - [1021.0, 263.0]

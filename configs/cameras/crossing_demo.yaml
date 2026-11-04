@@ -2,6 +2,7 @@
 id: crossing-demo-1
 name: Scramble crossing (demo)
 source: data/raw/crowd_06.mp4
+location: {lat: 37.53436, lon: 126.99625, label: "Itaewon-ro east", clip: "stock clip (Shibuya scramble, Pexels), demo position"}
 calibration:
   image_points:
   - [273.0, 852.0]

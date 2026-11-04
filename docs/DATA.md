@@ -39,7 +39,8 @@ people (§2.2, `crossing_demo`).
   (ARCHITECTURE §5). Labels are kept as first counted, never swapped after a spot-check.
 - **Split:** tuning = crowd_02 + crowd_06; held-out = crowd_03 + crowd_04, run **once** after tuning. crowd_05 is out.
 
-Clips in use (all stock, none of a real disaster):
+Clips in use (all stock, none of a real disaster; map positions in the camera YAML `location:` are demo positions
+around Itaewon Station — ARCHITECTURE §2.12):
 
 | Clip | Camera config | Notes |
 |---|---|---|
@@ -103,7 +104,19 @@ walk through every level:
 Anything shown from this camera must say it runs on demo thresholds — the overlay and dashboard show a red
 "DEMO THRESHOLDS" line automatically (ARCHITECTURE §2.1, §2.12).
 
-> Don't use real disaster footage (e.g. Itaewon) in the demo. Mention the event in the problem statement only.
+> **Real disasters — footage vs location.** Never use real disaster footage (e.g. Itaewon) in data, demos or tests
+> (CLAUDE.md hard rule, unchanged). **User decision (Day 6):** the demo *location* may be Itaewon — the dashboard map and
+> the simulated camera positions sit around Itaewon Station — on these conditions:
+> - all footage stays stock from elsewhere; every camera is labeled "stock clip (<source>), demo position"
+> - the 2022 event itself is not shown, re-enacted or replayed in the demo; it is named only in the problem statement
+> - demo thresholds keep their DEMO tag, so a demo RED is never presented as a real reading of Itaewon
+> - **camera positions** (user decision, Day 6): one camera at the alley entrance on Itaewon-ro (Exit 1) — on the main
+>   road, **not inside the alley** — and the others on the nearest busy streets. The alley-entrance camera runs a
+>   real-threshold clip (test_crowd_03, no overrides, ~0.24 people/m², stays GREEN, no DEMO tag); the demo RED
+>   (crossing_demo) is placed elsewhere, so a demo RED never shows at the site
+>
+> (This replaces the earlier "mention the event in the problem statement only": the event still isn't shown, but the
+> location is used.)
 
 ## 3. Seoul real-time city data (optional, context only)
 

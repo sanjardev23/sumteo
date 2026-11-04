@@ -2,6 +2,7 @@
 id: test-crowd-04
 name: Station plaza from above, crowd_04 (held-out test)
 source: data/raw/crowd_04.mp4
+location: {lat: 37.53500, lon: 126.99250, label: "World Food Street", clip: "stock clip (station plaza, other angle, Pexels), demo position"}
 calibration:
   image_points:
   - [781.0, 495.0]

@@ -28,10 +28,19 @@ class Zone(BaseModel):
     exit_line: list[Point] = []
 
 
+class Location(BaseModel):
+    """Where the dashboard map shows the camera. Stock clips sit at demo positions and say which clip they show."""
+    lat: float
+    lon: float
+    label: str = ""
+    clip: str = ""   # e.g. "stock clip (Shibuya, Pexels), demo position"; empty for a real camera
+
+
 class CameraConfig(BaseModel):
     id: str
     name: str = ""
     source: str | int
+    location: Location | None = None
     calibration: Calibration = Calibration()
     zones: list[Zone] = []
     overrides: dict = {}   # kept after merging so the overlay can flag demo thresholds

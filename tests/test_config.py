@@ -30,3 +30,13 @@ def test_calibration_is_saved_and_reloaded(tmp_path):
 def test_camera_keeps_its_overrides_so_demo_thresholds_can_be_flagged():
     _, demo = load_config(ROOT / "configs/cameras/crossing_demo.yaml", ROOT / "configs/default.yaml")
     assert "levels_ppm2" in demo.overrides["crowd"]
+
+
+def test_camera_location_is_optional_and_kept(tmp_path):
+    cam = tmp_path / "cam.yaml"
+    cam.write_text('id: c\nsource: x.mp4\nlocation: {lat: 37.5, lon: 127.0, label: "Exit 3", clip: "stock clip, demo position"}\n')
+    _, camera = load_config(cam, ROOT / "configs/default.yaml")
+    assert (camera.location.lat, camera.location.label) == (37.5, "Exit 3")
+    plain = tmp_path / "plain.yaml"
+    plain.write_text("id: p\nsource: y.mp4\n")
+    assert load_config(plain, ROOT / "configs/default.yaml")[1].location is None

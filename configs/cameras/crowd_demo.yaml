@@ -2,6 +2,7 @@
 id: crowd-demo-1
 name: Station square (demo)
 source: data/raw/crowd_02.mp4
+location: {lat: 37.53300, lon: 126.99445, label: "Bogwang-ro", clip: "stock clip (Osaka station square, Pexels), demo position"}
 calibration:
   image_points:
   - [603.0, 612.0]

@@ -19,7 +19,7 @@ from pathlib import Path
 import cv2
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -85,6 +85,7 @@ def camera_state(p: Pipeline) -> dict:
         })
     return {
         "id": p.camera.id, "name": p.camera.name or p.camera.id, "zones": zones, "health": list(p.health.problems),
+        "location": p.camera.location.model_dump() if p.camera.location else None,
         # Day 2 promise (§2.1, §2.12): a camera with its own level thresholds is a demo and must say so.
         "demo": {"overridden": p.demo_levels is not None, "levels": p.demo_levels},
     }
@@ -180,6 +181,16 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
                 await asyncio.sleep(1 / STREAM_FPS)
 
         return StreamingResponse(frames(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.get("/cameras/{camera_id}/frame.jpg")
+    async def frame(camera_id: str) -> Response:
+        """Latest blurred frame. Thumbnails poll this: browsers allow ~6 connections per host, and every MJPEG
+        stream holds one open, so only the preview and the enlarged view stream."""
+        _known(camera_id)
+        current = hub.frame(camera_id)
+        if current is None:
+            raise HTTPException(404, "no frame yet")
+        return Response(current[1], media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.get("/events")
     async def events(camera: str | None = None, severity: str | None = None, limit: int = 200) -> list[dict]:
