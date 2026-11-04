@@ -253,6 +253,13 @@ Turbulence is used only inside the RED escalation for now (hard to tune as its o
 > that calm ceiling — a margin of only 0.05. With 0.6, crossing_demo skipped ORANGE (0.67 events per change). Whether
 > 0.8 catches real crowd turbulence is untested: no stock footage shows it.
 
+> **Known limitation — density reads low on dense real CCTV.** On the crowd_07 held-out (§5, NWPU), the system counted
+> about half the people (0.65 of the label at 71 people, 0.40 at 243), and the gap grows with the crowd. Every
+> people/m² reading, the levels and the rise rate (people/m² per minute) are then low too — the **unsafe direction**: a
+> real crowd would reach a level later than the system shows it. The shape over time holds (build-up and clearing are
+> followed). Measured on one camera and 40 s; not corrected — a correction factor fitted on the held-out clip would
+> turn it into tuning data, so any fix needs new footage.
+
 ### 2.7 Events (`src/sumteo/events/`)
 - `models.py` — `Condition(type, zone_id, track_id, details)`, `Event(id, camera_id, type, severity, ts, zone_id, details, snapshot_path, verified, acknowledged)`
 - `engine.py` — `RuleEngine`
@@ -350,6 +357,52 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
   | `GET /signboard/{zone}` | `{zone, camera, level, label, message_ko, message_en, demo}` |
   | `WS /ws?role=security\|admin` | `hello` (all camera states + `open`: unacknowledged WARNING / CRITICAL events routed to that role since the server started — `Storage.open_alerts`), `camera` (one state, every second, all roles), `event` (routed by role), `ack` (all roles), `escalation` (admin) |
 
+
+**Replay mode (Day 6, user decision)** — this laptop (M3, 8 GB) can't run four cameras live (§4), so the demo plays
+**recorded runs** of the real pipeline, plus optionally one live camera.
+- **Record** — `scripts/record_camera.py --camera X.yaml --out data/recordings/<camera_id>/`: the same `Pipeline` at the
+  same settings, **one camera at a time**, on the laptop or on Google Colab (GPU; notebook `notebooks/record_colab.ipynb`,
+  committed without outputs). It writes only:
+  - `video.mp4` — the blurred + overlaid frames exactly as the stream shows them (960 px wide, the camera's `target_fps`)
+  - `timeline.jsonl` — video-clock ordered: one `camera` state per second (the WS message) and every `Event` as fired
+  - `snapshots/` — the blurred event snapshots
+  - `manifest.json` — camera id, sha256 of the merged camera config, git commit, device (`cuda` / `mps` / `cpu`),
+    clip duration
+  **Config hash** (`config.config_hash()`) = sha256 of the camera plus `runtime`, `models`, `tracking`, `crowd`,
+  `camera_health`, `events`, `privacy`, `verify` — **minus** where/how a run happens: `runtime.device`, `show_window`,
+  `save_path`, `loop`, `events.snapshot_dir`. Run-only sections are left out: `storage`, `api`, `notifiers`,
+  `city_data`. Everything that changes what is computed counts (thresholds, models, `target_fps`, calibration, zones,
+  source); paths are repo-relative, so the same clip on
+  Colab and the Mac hashes the same. The state lines are written with the API's `camera_state()`, so a recording holds
+  exactly what the WebSocket sends.
+  **Inputs:** `manifest.json` also holds `inputs` — the sha256 of `models.detector`, `models.density`, the camera source
+  and, when blur is on, `models.face_detector`. A replay refuses to start when a file at the same path exists here with a
+  different sha256 ("recording is stale, re-record (different file at …)"), so the same path can't hide different weights
+  or a different clip. Files missing here are skipped, which is what the replay-only Docker image needs (no weights or clips).
+  The replay path is import-light: torch and ultralytics load only in the live worker (`camera_main`).
+  Raw frames and identities are never stored (§2.10). Recordings live in `data/recordings/` (git-ignored); a recording of
+  crowd_07 is CroHD-derived, so CC BY-NC-SA 3.0 (DATA.md §2).
+- **Record = the solo test:** a camera's recording run is its on-its-own test (pipeline + levels + alerts, §2.12); a
+  camera joins the dashboard only with a recording that passed.
+- **Replay** — `serve.py --cameras <live.yaml …> --replay data/recordings/<id> …` (at least one of the two; a camera
+  can't be both live and replayed): a replay worker per recording (`api/replay.py`) loads **no models**; it plays `video.mp4` and `timeline.jsonl` paced by the wall clock at real speed, into the same queue →
+  Hub → WebSocket path as a live worker. Looping as for file sources: the video clock keeps counting across loops.
+- **Same platform path:** replayed events are stored in SQLite with a new id and `created_at` = now, routed by role,
+  pop up, need an ack and escalate after `ack_timeout_s` exactly like live ones. Each loop re-emits the recorded events:
+  new id, `created_at` = now, `ts` = recorded ts + loop offset, `replay` = 1; the snapshot is copied to
+  `<snapshot_dir>/<new id>.jpg`. One `crowd_metrics` row per zone per recorded second (video ts continued, `wall_ts` now,
+  `replay` = 1) keeps the density chart working; the `replay` column is added to old databases on connect.
+- **Honesty:**
+  - `/cameras` gets `mode: "live" | "replay"`; every view of a replayed camera (pin, card, video, event rows) carries a
+    "REPLAY — recorded run" tag next to the DEMO tag (§2.12). A replay is never presented as live inference.
+  - events and `crowd_metrics` get `replay` (0/1, a column, default 0); replayed rows and runs are never used for measured numbers (latency, FPS,
+    accuracy) — `docs/results.md` numbers come from live or offline-evaluation runs only.
+  - the replay worker refuses to start when the manifest's config hash differs from the current camera config (clear
+    error: "recording is stale, re-record"), so a replay never shows outdated settings silently.
+  - a recording made on Colab says so (`device: cuda`); its numbers can differ slightly from the Mac (MPS).
+- **Live camera (optional):** `crowd_demo` (lightest, 20.4 FPS alone) runs live to show the live path; with no live
+  camera the laptop runs no models at all.
+
 ### 2.12 Dashboard (`dashboard/`, Next 16, React 19, Tailwind 4, Recharts)
 Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
 - Camera grid with live MJPEG, zone overlays and level labels (color + 관심/주의/경계/심각) — Day 5; on `/admin` replaced by
@@ -371,6 +424,8 @@ Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
 - Event detail: blurred snapshot, rules that fired, VLM note
 - **Demo tag:** every view that shows a camera's level carries the same red "DEMO THRESHOLDS … (not the real levels)"
   line as the overlay (§2.1) when that camera overrides `crowd.levels_ppm2`
+- **Replay tag:** every view of a replayed camera carries "REPLAY — recorded run" (§2.11, *Replay mode*); only live
+  cameras show "live"
 - **Public signboard page** (extra): full-screen level + short instruction in Korean and English
   (e.g. "Crowded — use exit B →"), the way district signboards guide people away from a jam
 
@@ -378,7 +433,7 @@ Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
 `/signboard` and the role pick are unchanged. The Qalqon-style three-column control wall and the Stitch mockups were
 rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd/map) and floating-panel map dashboards.
 - **Location:** the demo map and the simulated camera positions sit around Itaewon Station (Yongsan-gu). Footage is
-  still stock (Shibuya, Osaka); every camera is labeled "stock clip (<source>), demo position". See DATA.md §2 for the
+  still from elsewhere (stock clips, and CroHD HT21-03 for crossing_demo); every camera is labeled "stock clip (<source>), demo position". See DATA.md §2 for the
   rule on using the location.
 - **Maps:** Kakao Maps JS SDK (user decision; replaced Naver). The JavaScript key from the user's Kakao Developers app
   goes in `dashboard/.env.local` as `NEXT_PUBLIC_KAKAO_MAP_KEY` — public by design, so it is domain-restricted in Kakao
@@ -398,7 +453,7 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
     people now); camera thumbnails (a still frame every 2 s, click to select); density chart for the last 5 min of the
     selected or worst camera
   - **bottom:** level legend (names only — thresholds are per camera and shown on its card) and a one-line ticker with
-    the latest alert + "N cameras online · stock clips at demo positions"
+    the latest alert + "N cameras online (K live, M replay) · stock clips at demo positions"
   - **dropped:** tabs, search, role label, donut charts, alerts-per-hour, separate live camera grid (thumbnails cover it)
   - **unchanged:** pop-up until acknowledged, sound, escalation, open = since server start (§2.8, above)
 - **Languages:** English first, Korean second (EN | 한국어); one dictionary in `dashboard/lib/i18n.ts`; the choice is
@@ -412,10 +467,11 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
   |---|---|---|---|
   | test_crowd_03 | 37.53452, 126.99345 | Itaewon-ro at Exit 1 (alley entrance) | real, stays GREEN |
   | test_crowd_04 | 37.53500, 126.99250 | World Food Street (~90 m west of the alley's north end) | real |
-  | crossing_demo | 37.53436, 126.99625 | Itaewon-ro east | **demo** (0.3 / 0.6 / 0.75) — the demo RED |
+  | crossing_demo | 37.53436, 126.99625 | Itaewon-ro east | **demo** (0.17 / 0.34 / 0.425, crowd_07) — the demo RED |
   | crowd_demo | 37.53300, 126.99445 | Bogwang-ro | **demo** (1.0 / 2.0 / 3.0) |
 
-  Roads confirmed by OSM reverse-geocode. Earlier pins were wrong: "Usadan-ro" sat north of Itaewon-ro and the
+  crossing_demo's clip is crowd_07 (CroHD HT21-03, CC BY-NC-SA 3.0, credited on screen and in the README; DATA.md §2),
+  replacing crowd_06 on Day 6. Roads confirmed by OSM reverse-geocode. Earlier pins were wrong: "Usadan-ro" sat north of Itaewon-ro and the
   "Bogwang-ro" point was on Usadan-ro; Usadan-ro is dropped, and so is a fifth camera (crowd_01). **Each camera is tested on its own first** (pipeline +
   levels + alerts) and joins the dashboard only after it passes. Heavy clips may be compressed, downscaled or swapped
   for lighter stock clips to keep the laptop cool.
@@ -433,15 +489,18 @@ estimated from mobile signals, updated every 5 min with ~15 min delay. Shown nex
 
 ```
 scripts/serve.py --cameras a.yaml b.yaml      (uvicorn; create_app() spawns the workers)
+   ├─ replay worker process × M (`--replay`, no models): video.mp4 + timeline.jsonl at wall-clock speed → same queues
    ├─ camera worker process × N (multiprocessing spawn): frame loop → perception → blur → analyzer → rule engine
    │     → SQLite + snapshots (written by the worker) ; queue → API:  frame (JPEG, put_nowait — dropped when full)
    │       · state (1/s) and event (`put_reliably()`: 5 s put timeout, a loud log line every 5 s while the API isn't
    │         reading, keeps retrying — never dropped, never silent)
    └─ API process: one reader thread per camera queue → Hub (api/hub.py, in-memory pub/sub) → WebSocket clients
          + MJPEG; reads SQLite and writes acks through its own connection; AckTracker (escalation)
-dashboard (next dev)
+dashboard (`next build && next start` for the demo — `next dev` recompiles and costs the laptop more)
    └─ talks to the API only
 run_camera.py --camera …                       (single camera, local window, no API)
+record_camera.py --camera … --out …           (one camera, offline, laptop or Colab → data/recordings/<id>/)
+docker compose up                             (replay-only demo: API + dashboard, no models — Docker on a Mac has no MPS)
 ```
 **Why processes, not threads** (measured, Day 5): two cameras as threads in the API ran 4.9 + 3.2 FPS — the
 Python-heavy parts serialize on the GIL; as processes 8.8 + 4.1 FPS (alone 14.9 / 6.6; the shared GPU is the remaining
@@ -458,6 +517,8 @@ Swap the queues + Hub for Redis only if cameras run on several machines.
 | Density model | ~1 run/s |
 | Full pipeline (Day 3, MPS) | measured: crowd_02 15.6 FPS; crossing_demo 8.6 FPS — density (928 ms/run, every 15 frames) is the main cost |
 | Full pipeline + blur (Day 4) | measured: crowd_02 14.9 FPS; crossing_demo 6.6 FPS (without blur 16.5 / 8.6) |
+| Full pipeline + blur, crossing_demo on crowd_07 (Day 6, 1080p, dense) | measured: ~2.0 FPS processed (600 of 1000 frames at `target_fps` 15, 302 s for a 40 s clip) — far under target. Stage times on 60 dense frames: YOLO + track 99.8 ms (39%, letterboxed to 1280 at any clip size), density 90.5 ms amortized (35%, NWPU on the full 1920×1080 frame, ~1.36 s per call every 15 frames), blur 30.9, flow 17.4, overlay 16.9, tracks 0.8 → 256 ms = 3.9 FPS on the stages alone; warm-up, snapshots, storage and delivery make up the rest. File sources keep every `fps / target_fps`-th frame and never drop frames to keep wall time (live feeds do), so a slow camera stretches the clip: at 2–4 FPS the 40 s clip takes ~2.5–5 min on the dashboard and the demo RED (video 14.5 s) appears 1–2 min in; events stay correct in video time. A real-time demo needs this camera's sustained FPS ≥ its own `target_fps`. **Chosen (user, Day 6):** this camera alone runs at `target_fps` 5, flow every frame, density every 10 frames (DATA.md §2) — sustained speed to be measured with all 4 cameras; a move to 720p is agreed with the user first, calibration scaled ×2/3, held-out result stays as measured at 1080p |
+| 4 cameras in one `serve.py` (Day 6, Apple M3, 8 GB) | measured: crossing_demo 0.06× real time (1 video-s per 16.6 wall-s), the others < 2 metric rows in 60 s; YOLO NMS time limit exceeded; no events, no camera-health alerts. Models only, each camera alone, after warm-up: test_crowd_03 8.4 FPS (needs 15), test_crowd_04 12.6 (15), crowd_demo 20.4 (15), crossing_demo 9.5 (5) → ~4.3 s of model time per wall second, > 4× this GPU, plus 4 model copies swapping in 8 GB. Capacity, not a broken camera. **Chosen (user, Day 6): replay mode** (§2.11) — each camera recorded alone, the demo plays the recordings, at most one live camera. Docker on a Mac has no MPS, so `docker compose` runs the replay-only demo |
 | Alert latency (level change → dashboard) | < 3 s + debounce — measured Day 5 (two cameras, `serve.py`): rule firing (`created_at`) → WS client 0.08–1.5 s, both roles; a CRITICAL 0.34 s |
 | Ack → alert closed for both roles | measured Day 5: within 2 s |
 | Unacked CRITICAL → escalation | measured Day 5: re-sent to admin at exactly `ack_timeout_s` (60 s); acked CRITICALs not escalated |
@@ -485,7 +546,8 @@ these 3 checks (too few to rule one out). Labels are kept as first counted, not 
 smaller than ~15% of the count can't be told apart from label noise.
 
 **Split:** tuning = crowd_02 + crowd_06; held-out = crowd_03 + crowd_04 (`test_crowd_03.yaml`, `test_crowd_04.yaml`, real
-thresholds, no overrides), run **once** after tuning. crowd_05 stays out (moving view). Tuned on 02 + 06 only:
+thresholds, no overrides), run **once** after tuning. crowd_05 stays out (moving view). crowd_06 was removed on Day 6 (replaced by crowd_07); the
+numbers above stand as measured. Tuned on 02 + 06 only:
 `out_dwell_s` (→ 2.5) and `turbulence_red` (→ 0.8, above the calm ceiling of 0.75; §2.5, §2.6). Level thresholds stay Fruin —
 stock footage can't tune ORANGE/RED.
 
@@ -494,6 +556,32 @@ count MAE 51.0 (system 9 / 17 vs 65 / 63 by eye, about −80%); 0 false alarms i
 not the model: from this height detection finds 1 in 4–7 people, and the switch rule kept detection below 2.5 /m² (the default then; at 2.0 the result is the same — SH-B read 0.07–0.09 /m²)
 (§2.2). The result stands as measured; the held-out set is **not** re-run with fixed configs — that would turn it into
 tuning data. A fix applies to the next camera.
+
+**Held-out on real CCTV — crowd_07 (Day 6, user decision "Run once, held-out"):** the protocol is fixed before anything
+runs, and nothing is changed after.
+- **Run:** `eval_crowd.py --levels --labels data/processed/crowd_levels.csv --cameras configs/cameras/crossing_demo.yaml`,
+  without `--demo`: the demo-only overrides are dropped, real thresholds. Camera properties stay (NWPU weights,
+  `switch_density_ppm2` 0) — the setup the Day 4 held-out finding called for. Calibration and zone (223.7 m²) as in
+  DATA.md §2, **frozen from now on**: the demo-threshold tuning run on the same clip may change only the demo-only
+  overrides, and its counts are not compared with the ground truth.
+- **Windows:** 8 × 5 s over the 40 s clip, so the build-up and the clearing are resolved; system count and level at
+  each window's midpoint frame.
+- **Label count:** CroHD ground-truth head boxes at the same midpoint frame (MOT frame = mid_s × 25 + 1), only rows the
+  MOT format marks as counted, kept when the foot point is inside the zone polygon. Foot point = head-box centre
+  lowered by 1.50 m (a ~1.62 m mixed adult minus ~0.12 m from crown to head centre) × the homography's **horizontal**
+  px-per-m, read at the head row, then re-read once at the estimated foot row. Label level = count ÷ 223.7 m² by the
+  real thresholds.
+- **Reported** like the crowd_03/04 held-out: per-window label vs system count, level accuracy, count MAE, mean error.
+- **Limits, stated with the result:** area ±10% along the band / ±25% across; the ground truth includes partly
+  occluded heads, so it counts more than any camera can see; zone membership near the edge depends on the foot-point
+  estimate; one camera, 40 s.
+
+**crowd_07 result (Day 6, run once; `docs/results.md`):** level 8 / 8 GREEN — trivial, peak ≈ 1.1 people/m² by the
+label. Count MAE 76.2, mean error −76.2 (≈ −49% of the mean label 155.8); system ÷ label falls from 0.65 at 71 people
+to 0.40 at 243, likely occlusion in the densest part; the system's peak is ~5 s late (median smoothing). 0 false
+alarms in 40 s. Before counting, class-4 boxes (2 tracks, 731 rows) were excluded as "Ignore" — the class number is
+inferred from the order in the CroHD paper; it changed 3 windows by −1. The density under-count is a known limitation
+(§2.6). As with crowd_03/04, the result stands and the clip is not re-run with changed settings.
 
 **`eval_crowd.py --levels --labels data/processed/crowd_levels.csv --cameras <yamls>`:** one headless run per labeled
 video with the camera matched by source file. Per window, the system's level and count at the labeled midpoint frame

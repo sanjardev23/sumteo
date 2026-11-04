@@ -1,6 +1,7 @@
 """Day 5 — FastAPI: cameras, MJPEG stream, events, ack, metrics, WebSocket.
 
 Run: python scripts/serve.py --cameras configs/cameras/crowd_demo.yaml configs/cameras/crossing_demo.yaml
+Day 6: `--replay data/recordings/<id> …` adds replay workers (api/replay.py) on the same queue → Hub → WebSocket path.
 
 One process per camera (ARCHITECTURE §3): in threads the cameras block each other on the GIL (two cameras 4.9 + 3.2
 FPS in threads vs 8.8 + 4.1 FPS in processes). Each worker sends frames, its state once a second and its events over a
@@ -15,6 +16,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import cv2
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -25,11 +27,14 @@ from pydantic import BaseModel
 
 from sumteo.analytics.crowd import CrowdLevel
 from sumteo.api.hub import Hub
+from sumteo.api.replay import load_recording, replay_main
 from sumteo.config import load_config
 from sumteo.events.escalation import AckTracker
 from sumteo.events.notifiers.platform import ROLES, PlatformNotifier, put_reliably, roles_for
-from sumteo.pipeline import Pipeline
 from sumteo.storage.db import Storage
+
+if TYPE_CHECKING:   # the replay path never imports torch / ultralytics (§2.11); only live workers do
+    from sumteo.pipeline import Pipeline
 
 STREAM_WIDTH = 960       # MJPEG frames are scaled down to this width: a dashboard tile doesn't need more
 STREAM_FPS = 15
@@ -45,6 +50,8 @@ SIGNBOARD = {            # public signboard text per level (§2.12)
 
 def camera_main(camera_path: str, default_path: str, out) -> None:
     """Entry point of a camera worker process."""
+    from sumteo.pipeline import Pipeline   # here, not at module level: replay-only servers load no model libraries
+
     app, camera = load_config(camera_path, default_path)
     app.runtime.update(show_window=False, save_path=None, loop=True)
     pipeline = Pipeline(app, camera, notifiers=[PlatformNotifier(out)])
@@ -84,7 +91,8 @@ def camera_state(p: Pipeline) -> dict:
             "thresholds": {lvl.value.lower(): v for lvl, v in analyzer.thresholds.items()} if analyzer else None,
         })
     return {
-        "id": p.camera.id, "name": p.camera.name or p.camera.id, "zones": zones, "health": list(p.health.problems),
+        "id": p.camera.id, "name": p.camera.name or p.camera.id, "mode": "live", "zones": zones,
+        "health": list(p.health.problems),
         "location": p.camera.location.model_dump() if p.camera.location else None,
         # Day 2 promise (§2.1, §2.12): a camera with its own level thresholds is a demo and must say so.
         "demo": {"overridden": p.demo_levels is not None, "levels": p.demo_levels},
@@ -95,9 +103,12 @@ class Ack(BaseModel):
     role: str
 
 
-def create_app(camera_paths: list[str], default_path: str = "configs/default.yaml") -> FastAPI:
+def create_app(camera_paths: list[str], default_path: str = "configs/default.yaml",
+               replay_dirs: list[str] = ()) -> FastAPI:
     hub = Hub()
-    defaults, _ = load_config(camera_paths[0], default_path)
+    manifests = {str(d): load_recording(d, default_path) for d in replay_dirs}   # a stale recording refuses to start
+    first = camera_paths[0] if camera_paths else next(iter(manifests.values()))["camera_config"]
+    defaults, _ = load_config(first, default_path)
     routes = defaults.notifiers["routes"]
     tracker = AckTracker(defaults.notifiers["ack_timeout_s"])
     storage = Storage(defaults.storage["db_path"])
@@ -105,9 +116,15 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     ctx = mp.get_context("spawn")
     sources = {load_config(path, default_path)[1].id: path for path in camera_paths}   # camera id → YAML
+    replays = {m["camera_id"]: d for d, m in manifests.items()}                         # camera id → recording
+    if both := sources.keys() & replays.keys():
+        raise ValueError(f"camera both live and replayed: {sorted(both)}")
+    sources.update({cid: manifests[d]["camera_config"] for cid, d in replays.items()})
     queues = {cid: ctx.Queue(_QUEUE_SIZE) for cid in sources}
     workers = {cid: ctx.Process(target=camera_main, args=(path, default_path, queues[cid]), name=f"camera-{cid}",
-                                daemon=True) for cid, path in sources.items()}
+                                daemon=True) for cid, path in sources.items() if cid not in replays}
+    workers.update({cid: ctx.Process(target=replay_main, args=(d, default_path, queues[cid]), name=f"replay-{cid}",
+                                     daemon=True) for cid, d in replays.items()})
     states: dict[str, dict] = {}
     started = time.time()
 

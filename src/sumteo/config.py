@@ -1,6 +1,8 @@
 """Load configs/default.yaml + a camera YAML, applying the camera's `overrides:`."""
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 import yaml
@@ -88,3 +90,18 @@ def load_config(camera_path: str | Path, default_path: str | Path = "configs/def
     camera = yaml.safe_load(Path(camera_path).read_text())
     overrides = camera.pop("overrides", None) or {}
     return AppConfig(**_deep_merge(default, overrides)), CameraConfig(**camera, overrides=overrides)
+
+
+# Day 6 — replay (§2.11): a recording is stale when what the pipeline computes with has changed. Where and how a run
+# happens (device: Colab cuda vs Mac mps, window, paths, API, alert routes) changes nothing in the recording.
+_HASHED_SECTIONS = ("runtime", "models", "tracking", "crowd", "camera_health", "events", "privacy", "verify")
+_RUN_ONLY = {"runtime": ("device", "show_window", "save_path", "loop"), "events": ("snapshot_dir",)}
+
+
+def config_hash(app: AppConfig, camera: CameraConfig) -> str:
+    data = {section: dict(getattr(app, section)) for section in _HASHED_SECTIONS}
+    for section, keys in _RUN_ONLY.items():
+        for key in keys:
+            data[section].pop(key, None)
+    data["camera"] = camera.model_dump(mode="json")
+    return hashlib.sha256(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()

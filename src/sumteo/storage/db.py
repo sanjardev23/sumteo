@@ -1,4 +1,5 @@
-"""Days 4–5 — SQLite storage for events and per-second crowd metrics; Day 5: queries and acknowledgements."""
+"""Days 4–5 — SQLite storage for events and per-second crowd metrics; Day 5: queries and acknowledgements.
+Day 6: a `replay` column on both tables marks rows re-emitted from a recorded run (§2.11)."""
 from __future__ import annotations
 
 import json
@@ -21,7 +22,8 @@ CREATE TABLE IF NOT EXISTS events (
     acknowledged INTEGER NOT NULL DEFAULT 0,
     acknowledged_by TEXT,
     acknowledged_ts REAL,
-    created_at REAL            -- wall clock (epoch s); ts is the video clock
+    created_at REAL,           -- wall clock (epoch s); ts is the video clock
+    replay INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS crowd_metrics (
     camera_id TEXT NOT NULL,
@@ -29,7 +31,8 @@ CREATE TABLE IF NOT EXISTS crowd_metrics (
     ts REAL NOT NULL,
     count REAL, density_ppm2 REAL, flow_speed REAL, median_speed_mps REAL, turbulence REAL, counter_flow REAL,
     rise_ppm2_per_min REAL, inflow_per_min REAL, outflow_per_min REAL, level TEXT,
-    wall_ts REAL               -- wall clock (epoch s)
+    wall_ts REAL,              -- wall clock (epoch s)
+    replay INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_events_camera_ts ON events(camera_id, ts);
 CREATE INDEX IF NOT EXISTS idx_metrics_camera_ts ON crowd_metrics(camera_id, ts);
@@ -40,6 +43,10 @@ def connect(path: str) -> sqlite3.Connection:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False)
     conn.executescript(SCHEMA)
+    for table in ("events", "crowd_metrics"):   # databases from before Day 6 get the column, old rows count as live
+        if "replay" not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN replay INTEGER NOT NULL DEFAULT 0")
+    conn.commit()
     return conn
 
 
@@ -50,11 +57,12 @@ class Storage:
     def add_event(self, event) -> None:
         self.conn.execute(
             "INSERT INTO events (id, camera_id, type, severity, ts, track_id, zone_id, details, snapshot_path, verified,"
-            " acknowledged, acknowledged_by, acknowledged_ts, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            " acknowledged, acknowledged_by, acknowledged_ts, created_at, replay)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (event.id, event.camera_id, event.type.value, event.severity.value, event.ts, event.track_id, event.zone_id,
              json.dumps(event.details, ensure_ascii=False), event.snapshot_path,
              None if event.verified is None else int(event.verified), int(event.acknowledged), event.acknowledged_by,
-             event.acknowledged_ts, event.created_at),
+             event.acknowledged_ts, event.created_at, int(event.replay)),
         )
         self.conn.commit()
 
@@ -62,10 +70,21 @@ class Storage:
         """One row per zone; the pipeline calls this once per second."""
         now = time.time()
         self.conn.executemany(
-            "INSERT INTO crowd_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO crowd_metrics VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
             [(camera_id, m.zone_id, m.ts, m.count, m.density_ppm2, m.flow_speed, m.median_speed_mps, m.turbulence,
               m.counter_flow, m.rise_ppm2_per_min, m.inflow_per_min, m.outflow_per_min, m.level.value, now)
              for m in metrics],
+        )
+        self.conn.commit()
+
+    def add_replayed_zones(self, camera_id: str, ts: float, zones: list[dict]) -> None:
+        """Replay (§2.11): one row per zone of a recorded camera state, so the density chart works; marked replay."""
+        now = time.time()
+        self.conn.executemany(
+            "INSERT INTO crowd_metrics (camera_id, zone_id, ts, count, density_ppm2, median_speed_mps, level, wall_ts,"
+            " replay) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+            [(camera_id, z["id"], ts, z["count"], z["density_ppm2"], z["speed_mps"], z["level"], now)
+             for z in zones if z.get("level")],
         )
         self.conn.commit()
 
@@ -110,12 +129,13 @@ class Storage:
 
     def _events(self, clause: str, args: tuple) -> list[dict]:
         cols = ("id", "camera_id", "type", "severity", "ts", "track_id", "zone_id", "details", "snapshot_path",
-                "verified", "acknowledged", "acknowledged_by", "acknowledged_ts", "created_at")
+                "verified", "acknowledged", "acknowledged_by", "acknowledged_ts", "created_at", "replay")
         cur = self.conn.execute(f"SELECT {', '.join(cols)} FROM events {clause}", args)
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         for row in rows:
             row["details"] = json.loads(row["details"] or "{}")
             row["acknowledged"] = bool(row["acknowledged"])
+            row["replay"] = bool(row["replay"])
         return rows
 
     def close(self) -> None:

@@ -64,3 +64,4 @@ class Event:
     # `ts` is the video clock (reproducible rules); people and the dashboard need wall time.
     created_at: float = field(default_factory=time.time)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
+    replay: bool = False                # Day 6: re-emitted from a recorded run (§2.11) — never a measured number

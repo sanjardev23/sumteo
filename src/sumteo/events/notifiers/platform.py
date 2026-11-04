@@ -33,6 +33,7 @@ def event_dict(event: Event) -> dict:
         "ts": event.ts, "zone_id": event.zone_id, "track_id": event.track_id, "details": event.details,
         "snapshot_path": event.snapshot_path, "acknowledged": event.acknowledged,
         "acknowledged_by": event.acknowledged_by, "acknowledged_ts": event.acknowledged_ts, "created_at": event.created_at,
+        "replay": event.replay,
     }
 
 
