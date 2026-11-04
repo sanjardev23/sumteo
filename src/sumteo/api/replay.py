@@ -64,12 +64,17 @@ class Replay:
     """Plays one recording into `out` (a queue). `clock` / `sleep` are injectable so pacing is testable."""
 
     def __init__(self, rec_dir: str | Path, out, storage: Storage | None, snapshot_dir: str | Path,
+                 repeat_alerts_s: float = 0.0,
                  clock: Callable[[], float] = time.monotonic, sleep: Callable[[float], None] = time.sleep):
         self.rec = Path(rec_dir)
         self.manifest = json.loads((self.rec / "manifest.json").read_text())
         self.entries = [json.loads(line) for line in (self.rec / "timeline.jsonl").open()]
         self.out, self.storage, self.snapshot_dir = out, storage, Path(snapshot_dir)
         self.clock, self.sleep = clock, sleep
+        # Repeat limit (§2.11): like the rule engine's cooldown, a (zone, type) that fired within `repeat_alerts_s` (video
+        # clock, which keeps counting across loops) is held back unless it comes at a higher severity.
+        self.repeat_alerts_s = repeat_alerts_s
+        self._last_emitted: dict[tuple, tuple[float, int]] = {}   # (zone, type) → (ts, severity rank)
         # One loop lasts the clip plus one frame, so the next loop's first frame doesn't land on the last one.
         self.period = self.manifest["duration_s"] + 1.0 / self.manifest["fps"]
 
@@ -104,8 +109,16 @@ class Replay:
             if self.storage:
                 self.storage.add_replayed_zones(state["id"], ts, state["zones"])
             put_reliably(self.out, {"kind": "state", "camera": state})
-        elif entry["kind"] == "event":
+        elif entry["kind"] == "event" and self._due(entry["event"], ts):
             put_reliably(self.out, {"kind": "event", "event": event_dict(self._reemit(entry["event"], ts))})
+
+    def _due(self, recorded: dict, ts: float) -> bool:
+        key, rank = (recorded["zone_id"], recorded["type"]), Severity(recorded["severity"]).rank
+        last = self._last_emitted.get(key)
+        if last and ts - last[0] < self.repeat_alerts_s and rank <= last[1]:
+            return False
+        self._last_emitted[key] = (ts, rank)
+        return True
 
     def _reemit(self, recorded: dict, ts: float) -> Event:
         event = Event(camera_id=recorded["camera_id"], type=EventType(recorded["type"]),
@@ -125,4 +138,5 @@ def replay_main(rec_dir: str, default_path: str, out) -> None:
     """Entry point of a replay worker process (the API checked the recording before starting it)."""
     manifest = json.loads((Path(rec_dir) / "manifest.json").read_text())
     app, _ = load_config(manifest["camera_config"], default_path)
-    Replay(rec_dir, out, Storage(app.storage["db_path"]), app.events["snapshot_dir"]).run()
+    Replay(rec_dir, out, Storage(app.storage["db_path"]), app.events["snapshot_dir"],
+           repeat_alerts_s=app.replay.get("repeat_alerts_s", 0.0)).run()

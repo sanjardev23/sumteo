@@ -1,11 +1,16 @@
 """Days 4–5 — SQLite storage for events and per-second crowd metrics; Day 5: queries and acknowledgements.
-Day 6: a `replay` column on both tables marks rows re-emitted from a recorded run (§2.11)."""
+Day 6: a `replay` column on both tables marks rows re-emitted from a recorded run (§2.11); `orders` from the control
+room to guards (§2.8), each status step with its wall time; `acknowledged_via` says whether an ack was single or one
+of an "Acknowledge all" (§2.8), so a bulk ack never reads as a reviewed alert."""
 from __future__ import annotations
 
 import json
 import sqlite3
 import time
+import uuid
 from pathlib import Path
+
+from sumteo.events.orders import is_forward
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS events (
@@ -23,7 +28,8 @@ CREATE TABLE IF NOT EXISTS events (
     acknowledged_by TEXT,
     acknowledged_ts REAL,
     created_at REAL,           -- wall clock (epoch s); ts is the video clock
-    replay INTEGER NOT NULL DEFAULT 0
+    replay INTEGER NOT NULL DEFAULT 0,
+    acknowledged_via TEXT      -- "single" | "bulk"
 );
 CREATE TABLE IF NOT EXISTS crowd_metrics (
     camera_id TEXT NOT NULL,
@@ -33,6 +39,19 @@ CREATE TABLE IF NOT EXISTS crowd_metrics (
     rise_ppm2_per_min REAL, inflow_per_min REAL, outflow_per_min REAL, level TEXT,
     wall_ts REAL,              -- wall clock (epoch s)
     replay INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS orders (
+    id TEXT PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    zone_id TEXT,
+    event_id TEXT,
+    text_key TEXT NOT NULL,
+    note TEXT,
+    status TEXT NOT NULL,      -- sent → on_my_way → done
+    created_at REAL NOT NULL,  -- wall clock (epoch s), sent by admin
+    on_my_way_at REAL,
+    done_at REAL,
+    by_role TEXT               -- role of the latest status step
 );
 CREATE INDEX IF NOT EXISTS idx_events_camera_ts ON events(camera_id, ts);
 CREATE INDEX IF NOT EXISTS idx_metrics_camera_ts ON crowd_metrics(camera_id, ts);
@@ -46,6 +65,8 @@ def connect(path: str) -> sqlite3.Connection:
     for table in ("events", "crowd_metrics"):   # databases from before Day 6 get the column, old rows count as live
         if "replay" not in {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN replay INTEGER NOT NULL DEFAULT 0")
+    if "acknowledged_via" not in {row[1] for row in conn.execute("PRAGMA table_info(events)")}:
+        conn.execute("ALTER TABLE events ADD COLUMN acknowledged_via TEXT")
     conn.commit()
     return conn
 
@@ -88,10 +109,10 @@ class Storage:
         )
         self.conn.commit()
 
-    def acknowledge(self, event_id: str, role: str, at: float) -> dict | None:
-        """Store who acknowledged and when (first acknowledgement wins). Returns the event, None if unknown."""
-        self.conn.execute("UPDATE events SET acknowledged = 1, acknowledged_by = ?, acknowledged_ts = ? "
-                          "WHERE id = ? AND acknowledged = 0", (role, at, event_id))
+    def acknowledge(self, event_id: str, role: str, at: float, via: str = "single") -> dict | None:
+        """Store who acknowledged, when and how (first acknowledgement wins). Returns the event, None if unknown."""
+        self.conn.execute("UPDATE events SET acknowledged = 1, acknowledged_by = ?, acknowledged_ts = ?, acknowledged_via = ? "
+                          "WHERE id = ? AND acknowledged = 0", (role, at, via, event_id))
         self.conn.commit()
         return self.event(event_id)
 
@@ -127,9 +148,50 @@ class Storage:
                                 "WHERE camera_id = ? AND wall_ts >= ? ORDER BY wall_ts", (camera, since))
         return [dict(zip(("zone_id", "ts", "wall_ts", "count", "density_ppm2", "level"), r)) for r in cur.fetchall()]
 
+    def add_order(self, camera_id: str, text_key: str, at: float, zone_id: str | None = None,
+                  event_id: str | None = None, note: str | None = None) -> dict:
+        order_id = uuid.uuid4().hex
+        self.conn.execute("INSERT INTO orders (id, camera_id, zone_id, event_id, text_key, note, status, created_at, by_role)"
+                          " VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, 'admin')",
+                          (order_id, camera_id, zone_id, event_id, text_key, note, at))
+        self.conn.commit()
+        return self.order(order_id)
+
+    def move_order(self, order_id: str, status: str, role: str, at: float) -> dict | None:
+        """Move an order forward (sent → on_my_way → done; a step may be skipped). None if unknown; ValueError if
+        the step isn't forward."""
+        row = self.order(order_id)
+        if row is None:
+            return None
+        if not is_forward(row["status"], status):
+            raise ValueError(f"order is {row['status']}, can't go to {status}")
+        self.conn.execute(f"UPDATE orders SET status = ?, {status}_at = ?, by_role = ? WHERE id = ?",
+                          (status, at, role, order_id))
+        self.conn.commit()
+        return self.order(order_id)
+
+    def order(self, order_id: str) -> dict | None:
+        rows = self._orders("WHERE id = ?", (order_id,))
+        return rows[0] if rows else None
+
+    def orders(self, camera: str | None = None, status: str | None = None, limit: int = 100) -> list[dict]:
+        where, args = [], []
+        if camera:
+            where.append("camera_id = ?"); args.append(camera)
+        if status:
+            where.append("status = ?"); args.append(status)
+        clause = ("WHERE " + " AND ".join(where)) if where else ""
+        return self._orders(f"{clause} ORDER BY created_at DESC LIMIT ?", (*args, limit))
+
+    def _orders(self, clause: str, args: tuple) -> list[dict]:
+        cols = ("id", "camera_id", "zone_id", "event_id", "text_key", "note", "status", "created_at", "on_my_way_at",
+                "done_at", "by_role")
+        cur = self.conn.execute(f"SELECT {', '.join(cols)} FROM orders {clause}", args)
+        return [dict(zip(cols, r)) for r in cur.fetchall()]
+
     def _events(self, clause: str, args: tuple) -> list[dict]:
         cols = ("id", "camera_id", "type", "severity", "ts", "track_id", "zone_id", "details", "snapshot_path",
-                "verified", "acknowledged", "acknowledged_by", "acknowledged_ts", "created_at", "replay")
+                "verified", "acknowledged", "acknowledged_by", "acknowledged_ts", "created_at", "replay", "acknowledged_via")
         cur = self.conn.execute(f"SELECT {', '.join(cols)} FROM events {clause}", args)
         rows = [dict(zip(cols, r)) for r in cur.fetchall()]
         for row in rows:

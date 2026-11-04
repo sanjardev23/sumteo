@@ -84,3 +84,7 @@ storage:
 api:
   host: 127.0.0.1
   port: 8000
+  main_camera: crowd-demo-1   # shown first / large on the dashboards (§2.12): Bogwang-ro, the sharpest view
+
+replay:                       # replay mode (§2.11); run-only, not part of a recording's config hash
+  repeat_alerts_s: 180        # a recorded event (camera, zone, type) re-emits at most once per this time across loops

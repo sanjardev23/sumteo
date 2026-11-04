@@ -111,6 +111,11 @@ the demo-only values were re-done for crowd_07 on Day 6 (below the crowd_06 ones
   (0.2 s pairs), `models.density_every_n_frames` 10 (2 s), so the camera keeps up in real time (ARCHITECTURE §4). Side
   effects, stated, not changed: the ByteTrack 30-frame buffer now lasts 6 s (2 s at 15 fps), and `turbulence_red` 0.8
   was tuned with ~0.13 s flow pairs, so it may not mean the same here. Other cameras stay at 15 / 2 / 15.
+  **Recorded (Colab, Day 6):** GREEN → YELLOW 4 s → `DENSITY_RISING` 6.0 s → ORANGE 11 s → RED 17 s → `COUNTER_FLOW`
+  19.2 s → RED until 35 s → ORANGE 36 s → YELLOW 37–39 s. Density alone falls below RED − hysteresis at 29 s; RED holds
+  6 s longer through "ORANGE + turbulence > 0.8 → RED" — the 0.2 s flow pairs read the clearing crowd as turbulent
+  (inferred from the level logic; turbulence isn't logged in the state). Over-warning, the safe direction; stated, not
+  changed.
 
 *Demo-only, not danger:* a normal busy crossing (~1 person/m²) is GREEN by Fruin, which is correct. To make the clip
 walk through every level:
@@ -131,7 +136,17 @@ Anything shown from this camera must say it runs on demo thresholds — the over
 > the simulated camera positions sit around Itaewon Station — on these conditions:
 > - all footage stays stock or public research footage from elsewhere; every camera is labeled "stock clip (<source>),
 >   demo position" (crowd_07: "CroHD HT21-03 (MOTChallenge, CC BY-NC-SA 3.0), demo position")
-> - the 2022 event itself is not shown, re-enacted or replayed in the demo; it is named only in the problem statement
+> - the 2022 event itself is not shown, re-enacted or replayed in the demo. **Landing-page story (user decision, Day 6,
+>   "Our own illustrations + licensed photos"):** the landing page may tell what happened and why, with cited facts
+>   (deaths, alley width, measured density, the official findings) and licensed photos taken **after** the event —
+>   memorials and Seoul's later AI people-counting system. Never: photos or video from the night, the scene in its
+>   aftermath (debris), Google / news images, legible victims' names or personal messages, count-up or playful motion
+>   on the facts, or a diagram or animation that models the Itaewon alley filling up (that would be a re-enactment;
+>   density diagrams stay generic). Wording stays honest: "built to give staff minutes back", never "would have
+>   prevented it" or "saves lives" as a claim, plus the limit that on dense real CCTV it counts about half the people.
+>   Each photo keeps its licence: CC BY-SA images credited (author, licence, link); the KOGL Type 4 image (출처표시 +
+>   상업적 이용금지 + 변경금지) served byte-identical, shown whole (no crop or overlay), non-commercial, credited.
+>   Files in `dashboard/public/landing/` with `CREDITS.md`; the code's MIT licence doesn't cover them.
 > - demo thresholds keep their DEMO tag, so a demo RED is never presented as a real reading of Itaewon
 > - **camera positions** (user decision, Day 6): one camera at the alley entrance on Itaewon-ro (Exit 1) — on the main
 >   road, **not inside the alley** — and the others on the nearest busy streets. The alley-entrance camera runs a

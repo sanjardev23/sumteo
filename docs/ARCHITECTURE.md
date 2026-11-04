@@ -251,7 +251,8 @@ Turbulence is used only inside the RED escalation for now (hard to tune as its o
 > crowds already read high: smoothed, after the first window, crowd_02 median 0.59 / p95 0.74 and crowd_06 (real
 > thresholds) median 0.61 / p95 0.72, max 0.75 on both. `turbulence_red` was raised 0.6 → **0.8** (Day 4), just above
 > that calm ceiling — a margin of only 0.05. With 0.6, crossing_demo skipped ORANGE (0.67 events per change). Whether
-> 0.8 catches real crowd turbulence is untested: no stock footage shows it.
+> 0.8 catches real crowd turbulence is untested: no stock footage shows it. At other flow spacings it means something
+> else: crossing_demo at 5 fps (0.2 s pairs) holds RED ~6 s past the density drop while the crowd clears (DATA.md §2).
 
 > **Known limitation — density reads low on dense real CCTV.** On the crowd_07 held-out (§5, NWPU), the system counted
 > about half the people (0.65 of the label at 71 people, 0.40 at 243), and the gap grows with the crowd. Every
@@ -291,12 +292,29 @@ and role so each group only gets what it must act on. Routes live in config `not
   simple login screen; a real deployment needs proper accounts.
 - **Getting noticed:** sound + browser notification (works when the tab is in the background) + priority pop-up.
 - **Acknowledge:** an alert stays highlighted until someone acknowledges it; who and when is stored.
+  **Acknowledge all** (Day 6, user: 90+ open alerts as admin): admin only, after a confirm dialog ("… their escalations
+  stop. Check the map for any camera still RED first."); each id goes through the single-ack path (first ack wins,
+  escalation cancelled, `ack` to every client). Audit: `events.acknowledged_via` = `single` | `bulk` (NULL for acks
+  from before the column), so a bulk ack never reads as individually reviewed.
 - **Escalation** (`events/escalation.py` — `AckTracker`, API process, **wall clock** since acks are human time): any
   CRITICAL not acknowledged within `ack_timeout_s` is re-sent **once** to admin as an `escalation` message; the DB
   event's details get `escalated: "no response"` and `escalated_at`.
 - **KakaoTalk (optional):** the messenger Koreans actually use. Demo: Kakao Developers "send to me" API with the
   operator's own token. Production: business channel + AlimTalk (알림톡). Sends text + a link to the event,
   not the photo, so snapshots stay on the platform.
+
+- **Orders, control room → guards (Day 6, user decision "Camera on every alert + orders"):** the admin sends a short
+  instruction tied to a camera (and optionally a zone / event); guards answer with their status.
+  - `text_key` from a fixed bilingual list (`dashboard/lib/i18n.ts`): `go_to_camera` ("Go to this camera's area"),
+    `redirect_exit` ("Redirect people to another exit"), `stop_entry` ("Stop people entering"), `open_lane` ("Open a
+    one-way lane"), `clear_blockage` ("Clear the blockage"); plus an optional note (≤ 140 characters).
+  - Status `sent` → `on_my_way` → `done`; only `admin` sends (403 otherwise), only `security` moves the status, forward
+    only (409 on a backward step; `sent` → `done` is allowed). `text_key` outside the list or a longer note → 400.
+    `by_role` is the role of the latest step. Each step's wall time is
+    stored (`created_at`, `on_my_way_at`, `done_at`) with the role, like acks. The role comes from the demo role pick —
+    real accounts are backlog (§2.12).
+  - Orders are human actions: never recorded or replayed, never used for measured numbers. Escalation stays alerts-only.
+  - Guards see only blurred frames and snapshots, the same as admin (§2.10).
 
 Notifiers: `console`, `platform`, `kakao`. `PlatformNotifier` runs in the camera worker and only forwards the event to
 the API process; role routing (`notifiers.routes`, roles `security` / `admin`) happens there.
@@ -336,7 +354,8 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 - Raw video is not stored by default — only event snapshots.
 
 ### 2.11 Storage and API
-- `storage/db.py` — SQLite tables: `events`, `crowd_metrics` (1 row per zone per second).
+- `storage/db.py` — SQLite tables: `events`, `crowd_metrics` (1 row per zone per second), `orders` (id, camera_id,
+  zone_id, event_id, text_key, note, status, created_at, on_my_way_at, done_at, by_role).
   `Storage(path)` with `add_event(event)` and `add_metrics(camera_id, metrics)`; the pipeline writes `crowd_metrics` once
   per zone per second (when `int(ts)` changes) and every event as it fires. While the camera has a health problem no
   `crowd_metrics` rows are written — an honest gap, not stale rows.
@@ -351,11 +370,15 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
   | `GET /cameras/{id}/frame.jpg` | the latest processed frame — the same blurred + overlaid JPEG as the stream (960 px wide, ~90–150 KB); `Cache-Control: no-store`; 404 for an unknown camera or before the first frame. Why: browsers allow ~6 connections per host and each MJPEG holds one, so only the camera card and enlarged view stream; thumbnails poll this every 2 s |
   | `GET /events?camera=&severity=` | event history |
   | `GET /events/{id}` | one event |
+  | `POST /events/ack` | body `{role: "admin", ids: [...]}` — bulk ack, admin only (403), ≤ 500 ids (400), duplicates / unknown ids skipped; returns the updated rows |
   | `POST /events/{id}/ack` | body `{role}`; the **first ack wins**; stores `acknowledged_by`, `acknowledged_ts` (wall) |
   | `GET /metrics/{camera}?since=` | crowd density time series; `since` in wall-clock epoch s |
   | `GET /snapshots/<id>.jpg` | static, blurred event snapshots |
+  | `POST /orders` | body `{camera_id, zone_id?, event_id?, text_key, note?, role: "admin"}` — admin only; stored with status `sent` (§2.8) |
+  | `POST /orders/{id}/status` | body `{status: "on_my_way" \| "done", role: "security"}` — forward only, stores the step's wall time |
+  | `GET /orders?camera=&status=` | order history |
   | `GET /signboard/{zone}` | `{zone, camera, level, label, message_ko, message_en, demo}` |
-  | `WS /ws?role=security\|admin` | `hello` (all camera states + `open`: unacknowledged WARNING / CRITICAL events routed to that role since the server started — `Storage.open_alerts`), `camera` (one state, every second, all roles), `event` (routed by role), `ack` (all roles), `escalation` (admin) |
+  | `WS /ws?role=security\|admin` | `hello` (all camera states + `open`: unacknowledged WARNING / CRITICAL events routed to that role since the server started — `Storage.open_alerts`), `camera` (one state, every second, all roles), `event` (routed by role), `ack` (all roles), `escalation` (admin), `order` (security), `order_update` (all roles) |
 
 
 **Replay mode (Day 6, user decision)** — this laptop (M3, 8 GB) can't run four cameras live (§4), so the demo plays
@@ -387,6 +410,12 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 - **Replay** — `serve.py --cameras <live.yaml …> --replay data/recordings/<id> …` (at least one of the two; a camera
   can't be both live and replayed): a replay worker per recording (`api/replay.py`) loads **no models**; it plays `video.mp4` and `timeline.jsonl` paced by the wall clock at real speed, into the same queue →
   Hub → WebSocket path as a live worker. Looping as for file sources: the video clock keeps counting across loops.
+- **Repeat limit (Day 6, user: "show RED / alerts less"):** a looping replay would re-emit every recorded event each
+  loop (~4 pop-ups per 40 s on the crossing), more than a live camera, which `cooldown_s` holds back. `replay.repeat_alerts_s`
+  (default 180, top-level `replay:` in `configs/default.yaml`) mirrors the rule engine's cooldown: per (zone, type), on
+  the video clock, an event within that time is held back **unless it comes at a higher severity** — so a returning
+  YELLOW → ORANGE → RED sequence still plays out whole. The first loop emits all; video and states keep looping. A
+  run-only setting, outside the config hash.
 - **Same platform path:** replayed events are stored in SQLite with a new id and `created_at` = now, routed by role,
   pop up, need an ack and escalate after `ack_timeout_s` exactly like live ones. Each loop re-emits the recorded events:
   new id, `created_at` = now, `ts` = recorded ts + loop offset, `replay` = 1; the snapshot is copied to
@@ -405,6 +434,22 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 
 ### 2.12 Dashboard (`dashboard/`, Next 16, React 19, Tailwind 4, Recharts)
 Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
+**Landing page `/` (Day 6, user decisions):** tells why Sumteo exists — the Itaewon story with cited facts and licensed
+after-photos (rules in DATA.md §2, *Real disasters*), then "how Sumteo addresses it": each failure mapped to a feature
+(no one measured density → people/m² per zone; late, unescalated warnings → four levels, rising / stagnation /
+counter-flow alerts, escalation after 60 s; control room and street not connected → orders with the camera view;
+privacy → face blur) and a limits line (prototype; on dense real CCTV it counts about half the people). The top demo
+strip is removed; "demo positions, stock and research footage" stays visible in the live-status block and the footer.
+Animations (scroll reveals, transform / opacity, short staggers, generic density diagram, pipeline pulse) are off under
+`prefers-reduced-motion` and never on the tragedy facts. As built: one memorial photo (Commons, CC BY-SA, credited
+under it; the post-it photo was dropped — legible political messages) and Seoul's AI CCTV view (KOGL Type 4, whole);
+the density illustration is a generic 10 × 4 m zone at 1 / 2 / 4 / 5 / 6 people/m² by the real thresholds, marked
+"illustration, not footage"; every fact links to a numbered source list on the page. A light public-service portal look with **our own** branding (Sumteo 숨터,
+own wave mark) — no real agency name, emblem or layout copied, so it can't pass as an official service. Live status from `/cameras` + `/events` (cameras, open alerts,
+live / replay); two role cards (Control room / Field guard); info cards (privacy, crowd levels, footage); footer:
+Fruin research thresholds, not official Seoul figures; no 2022 footage; "Not an official government service" and the
+demo-positions sentence (kept on purpose: a real Itaewon story in a portal look must not read as a real Seoul system);
+no role-pick note (user); credits for CroHD (CC BY-NC-SA 3.0), Pexels and Kakao Maps.
 - Camera grid with live MJPEG, zone overlays and level labels (color + 관심/주의/경계/심각) — Day 5; on `/admin` replaced by
   the v2 map (below)
 - **Priority pop-up:** when a camera hits ORANGE/RED its feed jumps to a large view at the top with a sound,
@@ -446,7 +491,12 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
   - **header:** Sumteo 숨터 · Crowd Safety Monitor · Itaewon, Yongsan-gu | live dot, KST clock, EN | 한국어
   - **left card:** event list, filters All / Open / Critical / Warning, Acknowledge per row, NO RESPONSE mark. Clicking a
     row moves the map to the camera, opens its card and the event detail (blurred snapshot + all stored details)
-  - **camera pins** (from the YAML `location`): level color + density; a RED pin pulses. First click → card under the
+  - **camera pins** (from the YAML `location`; Day 6, user decision): a CCTV icon (Lucide `cctv`, ISC) in a white badge
+    whose border is the level color, with a ring pulsing out faster as the level rises (GREEN / YELLOW 2.6 s, ORANGE
+    1.5 s, RED 0.9 s + glow; off under `prefers-reduced-motion`); the same pins on the `/security` mini maps.
+    Text cue for colour-blind users: the visible label keeps the density, and title / aria-label read "label · level ·
+    density · REPLAY". Pins stack by level (RED on top, the selected pin above all), so a label never hides an urgent pin;
+    the map opens on the four cameras' midpoint at Kakao level 4, so all pins stay on screen with the main card open. First click → card under the
     pin: blurred live MJPEG, density / people / speed per zone, active rules, clip source, DEMO thresholds line, Enlarge
     and Acknowledge. Second click → enlarged view
   - **right card:** small Seoul map with the Itaewon area ringed; KPI tiles (cameras online, open alerts, peak density,
@@ -465,7 +515,7 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
 
   | Camera | Position (lat, lon) | Label | Thresholds |
   |---|---|---|---|
-  | test_crowd_03 | 37.53452, 126.99345 | Itaewon-ro at Exit 1 (alley entrance) | real, stays GREEN |
+  | test_crowd_03 | 37.53452, 126.99345 | Itaewon-ro at Exit 1 (alley entrance) | real, stays GREEN — reads 0.01–0.04 /m² against ~0.24 by eye (the high-view under-count, §2.2), so calm by setup, not measured calm |
   | test_crowd_04 | 37.53500, 126.99250 | World Food Street (~90 m west of the alley's north end) | real |
   | crossing_demo | 37.53436, 126.99625 | Itaewon-ro east | **demo** (0.17 / 0.34 / 0.425, crowd_07) — the demo RED |
   | crowd_demo | 37.53300, 126.99445 | Bogwang-ro | **demo** (1.0 / 2.0 / 3.0) |
@@ -475,6 +525,15 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
   "Bogwang-ro" point was on Usadan-ro; Usadan-ro is dropped, and so is a fifth camera (crowd_01). **Each camera is tested on its own first** (pipeline +
   levels + alerts) and joins the dashboard only after it passes. Heavy clips may be compressed, downscaled or swapped
   for lighter stock clips to keep the laptop cool.
+- **Main camera:** `api.main_camera` in `configs/default.yaml` (Day 6: `crowd-demo-1`, Bogwang-ro — user: the
+  crossing looks poor under the whole-frame soft blur, which stays, §2.10). `GET /cameras` marks it `main: true`. `/admin`:
+  first in thumbnails, its card open on load, the density chart's default. `/security`: shown large at the
+  top. The crossing stays the demo-RED camera.
+- **`/security` v2 (Day 6, user decision):** every alert card shows the blurred camera (`frame.jpg` every 2 s — phone-
+  friendly, not MJPEG), the event's blurred snapshot, a small Kakao map with the pin, level, reasons and the REPLAY / DEMO
+  tags. "Acknowledge" reads **"On my way"** for security (same ack: first wins, closes it for both roles). Orders (§2.8)
+  show as cards with the same camera view and the order text, buttons "On my way" → "Done". `/admin` shows each order's
+  status on the camera card and event detail, with "Send order to guards" there.
 - **Later (after Day 6):** deploy on a bought domain with access limited to selected people — needs its own design
   (auth in front of the API, dashboard and MJPEG) before it's built.
 
@@ -506,6 +565,8 @@ docker compose up                             (replay-only demo: API + dashboard
 Python-heavy parts serialize on the GIL; as processes 8.8 + 4.1 FPS (alone 14.9 / 6.6; the shared GPU is the remaining
 cost). File sources loop for the demo (`runtime.loop`, set by the server); the video clock keeps counting across loops.
 Swap the queues + Hub for Redis only if cameras run on several machines.
+**Shutdown:** MJPEG streams never end, so `serve.py` gives uvicorn `timeout_graceful_shutdown=3`; after 3 s the lifespan
+cleanup still runs and terminates the workers (Day 6: without it, a force-kill left orphaned workers).
 
 ---
 

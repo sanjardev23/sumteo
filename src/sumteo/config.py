@@ -62,6 +62,7 @@ class AppConfig(BaseModel):
     storage: dict
     api: dict
     city_data: dict
+    replay: dict = {}
 
 
 def _deep_merge(base: dict, override: dict) -> dict:

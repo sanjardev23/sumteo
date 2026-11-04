@@ -34,7 +34,8 @@ def main() -> None:
         raise SystemExit(str(error)) from None
     first = args.cameras[0] if args.cameras else load_recording(args.replay[0], args.config)["camera_config"]
     api = load_config(first, args.config)[0].api
-    uvicorn.run(app, host=api["host"], port=api["port"], log_level="warning")
+    # MJPEG streams never end on their own: without a limit a stop waits forever and leaves the camera workers running.
+    uvicorn.run(app, host=api["host"], port=api["port"], log_level="warning", timeout_graceful_shutdown=3)
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from sumteo.api.replay import load_recording, replay_main
 from sumteo.config import load_config
 from sumteo.events.escalation import AckTracker
 from sumteo.events.notifiers.platform import ROLES, PlatformNotifier, put_reliably, roles_for
+from sumteo.events.orders import NOTE_MAX, SENDER_ROLE, STATUS_ROLE, STATUSES, TEXT_KEYS
 from sumteo.storage.db import Storage
 
 if TYPE_CHECKING:   # the replay path never imports torch / ultralytics (§2.11); only live workers do
@@ -99,7 +100,34 @@ def camera_state(p: Pipeline) -> dict:
     }
 
 
+def with_main(state: dict, main_camera: str | None) -> dict:
+    """The camera state as clients get it: marked `main` for the one dashboards show first / large (§2.12)."""
+    return {**state, "main": state["id"] == main_camera}
+
+
 class Ack(BaseModel):
+    role: str
+
+
+class AckMany(BaseModel):
+    role: str
+    ids: list[str]
+
+
+ACK_MANY_MAX = 500   # one control-room click; more would hide what is being acknowledged
+
+
+class NewOrder(BaseModel):
+    camera_id: str
+    text_key: str
+    role: str
+    zone_id: str | None = None
+    event_id: str | None = None
+    note: str | None = None
+
+
+class OrderStatus(BaseModel):
+    status: str
     role: str
 
 
@@ -110,6 +138,7 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
     first = camera_paths[0] if camera_paths else next(iter(manifests.values()))["camera_config"]
     defaults, _ = load_config(first, default_path)
     routes = defaults.notifiers["routes"]
+    main_camera = defaults.api.get("main_camera")
     tracker = AckTracker(defaults.notifiers["ack_timeout_s"])
     storage = Storage(defaults.storage["db_path"])
     snapshot_dir = Path(defaults.events["snapshot_dir"])
@@ -135,8 +164,9 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
             if msg["kind"] == "frame":
                 hub.set_frame(camera_id, msg["jpeg"])
             elif msg["kind"] == "state":
-                states[camera_id] = msg["camera"]
-                hub.publish({"type": "camera", "camera": msg["camera"]})
+                state = with_main(msg["camera"], main_camera)
+                states[camera_id] = state
+                hub.publish({"type": "camera", "camera": state})
             elif msg["kind"] == "event":
                 event = msg["event"]
                 roles = roles_for(routes, event["severity"])
@@ -230,6 +260,59 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
         tracker.ack(event_id)
         hub.publish({"type": "ack", "event": row})
         return row
+
+    @app.post("/orders")
+    async def new_order(body: NewOrder) -> dict:
+        """Control room → guards (§2.8): only admin sends; a fixed text key, an optional short note."""
+        if body.role != SENDER_ROLE:
+            raise HTTPException(403, "only admin sends orders")
+        _known(body.camera_id)
+        if body.text_key not in TEXT_KEYS:
+            raise HTTPException(400, f"text_key must be one of {TEXT_KEYS}")
+        note = (body.note or "").strip() or None
+        if note and len(note) > NOTE_MAX:
+            raise HTTPException(400, f"note is limited to {NOTE_MAX} characters")
+        row = storage.add_order(body.camera_id, body.text_key, time.time(), body.zone_id, body.event_id, note)
+        hub.publish({"type": "order", "order": row}, {"security"})
+        hub.publish({"type": "order_update", "order": row}, {"admin"})
+        return row
+
+    @app.post("/orders/{order_id}/status")
+    async def order_status(order_id: str, body: OrderStatus) -> dict:
+        if body.role != STATUS_ROLE:
+            raise HTTPException(403, "only security moves an order's status")
+        if body.status not in STATUSES:
+            raise HTTPException(400, f"status must be one of {STATUSES}")
+        try:
+            row = storage.move_order(order_id, body.status, body.role, time.time())
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from None
+        if row is None:
+            raise HTTPException(404, "unknown order")
+        hub.publish({"type": "order_update", "order": row})
+        return row
+
+    @app.get("/orders")
+    async def orders(camera: str | None = None, status: str | None = None, limit: int = 100) -> list[dict]:
+        return storage.orders(camera, status, limit)
+
+    @app.post("/events/ack")
+    async def ack_many(body: AckMany) -> list[dict]:
+        """Control room "Acknowledge all": each listed alert goes through the same path as a single ack (first ack
+        wins, its escalation is cancelled, every client is told). Admin only; the dashboard confirms first."""
+        if body.role != "admin":
+            raise HTTPException(403, "only admin acknowledges alerts in bulk")
+        if len(body.ids) > ACK_MANY_MAX:
+            raise HTTPException(400, f"at most {ACK_MANY_MAX} alerts per call")
+        now, rows = time.time(), []
+        for event_id in dict.fromkeys(body.ids):
+            row = storage.acknowledge(event_id, body.role, now, via="bulk")
+            if row is None:
+                continue
+            tracker.ack(event_id)
+            hub.publish({"type": "ack", "event": row})
+            rows.append(row)
+        return rows
 
     @app.get("/metrics/{camera_id}")
     async def metrics(camera_id: str, since: float = 0.0) -> list[dict]:
