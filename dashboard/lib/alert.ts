@@ -24,6 +24,14 @@ function beep(freq: number, start: number, length: number): void {
   osc.stop(audio.currentTime + start + length);
 }
 
+/** Day 6: a new order for the guards — two rising tones and a notification that stays until clicked. */
+export function announceOrder(): void {
+  [523, 784].forEach((f, i) => beep(f, i * 0.18, 0.16));
+  if ("Notification" in window && Notification.permission === "granted") {
+    new Notification("Order from the control room · 관제실 지시", { requireInteraction: true });
+  }
+}
+
 export function announce(event: SumteoEvent, escalated = false): void {
   if (event.severity === "INFO") return;
   const critical = event.severity === "CRITICAL";

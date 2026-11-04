@@ -40,8 +40,18 @@ export interface Pin extends LatLon {
   label: string;
   value?: string;
   tag?: string; // e.g. "REPLAY": shown after the value
-  pulse?: boolean;
+  level?: string | null; // GREEN … RED: how fast the ring around the camera pulses
+  levelText?: string; // the level in words, for the tooltip / screen readers: color alone isn't enough
 }
+
+const LEVEL_ORDER = ["GREEN", "YELLOW", "ORANGE", "RED"];
+
+// A CCTV camera (Lucide "cctv", ISC licence), drawn inside the pin's level-colored badge.
+const CAMERA_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+  '<path d="M16.75 12h3.632a1 1 0 0 1 .894 1.447l-2.034 4.069a1 1 0 0 1-1.708.134l-2.124-2.97"/>' +
+  '<path d="M17.106 9.053a1 1 0 0 1 .447 1.341l-3.106 6.211a1 1 0 0 1-1.342.447L3.61 12.3a2.92 2.92 0 0 1-1.3-3.91L3.69 5.6a2.92 2.92 0 0 1 3.92-1.3z"/>' +
+  '<path d="M2 19h3.76a2 2 0 0 0 1.8-1.1L9 15"/><path d="M2 21v-4"/><path d="M7 9h.01"/></svg>';
 
 export interface Ring extends LatLon {
   radius: number; // meters
@@ -122,10 +132,15 @@ export function KakaoMap({
         overlays.current.set(p.id, o);
       }
       o.overlay.setPosition(new k.maps.LatLng(p.lat, p.lon));
-      o.overlay.setZIndex(p.id === selected ? 5 : 3);
-      o.el.className = `sumteo-pin${p.id === selected ? " is-selected" : ""}${p.pulse ? " is-pulse" : ""}`;
+      // The more urgent camera sits on top, so a neighbour's label never hides a RED pin; the selected one above all.
+      o.overlay.setZIndex(p.id === selected ? 10 : 3 + Math.max(0, LEVEL_ORDER.indexOf(p.level ?? "")));
+      o.el.className = `sumteo-pin${p.id === selected ? " is-selected" : ""}${p.level ? ` is-${p.level.toLowerCase()}` : ""}`;
+      const spoken = [p.label, p.levelText, p.value, p.tag].filter(Boolean).join(" · ");
+      o.el.title = spoken;
+      o.el.setAttribute("aria-label", spoken);
+      o.el.setAttribute("role", "button");
       o.el.innerHTML =
-        `<span class="sumteo-pin-dot" style="--c:${p.color}"></span>` +
+        `<span class="sumteo-pin-cam" style="--c:${p.color}">${CAMERA_ICON}</span>` +
         `<span class="sumteo-pin-label">${esc(p.label)}${p.value ? ` <b>${esc(p.value)}</b>` : ""}` +
         `${p.tag ? ` <i class="sumteo-pin-tag">${esc(p.tag)}</i>` : ""}</span>`;
     }

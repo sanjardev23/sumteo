@@ -26,6 +26,7 @@ export interface Camera {
   health: string[];
   location: { lat: number; lon: number; label: string; clip: string } | null;
   mode?: "live" | "replay"; // Day 6: replay = a recorded run (§2.11), never live inference
+  main?: boolean; // Day 6: the camera dashboards show first / large (api.main_camera, §2.12)
   demo: { overridden: boolean; levels: { yellow: number; orange: number; red: number } | null };
 }
 
@@ -41,6 +42,7 @@ export interface SumteoEvent {
   snapshot_path: string | null;
   acknowledged: boolean;
   acknowledged_by: string | null;
+  acknowledged_via?: "single" | "bulk" | null;
   acknowledged_ts: number | null;
   created_at: number;
   replay?: boolean;
@@ -74,6 +76,60 @@ export async function acknowledge(eventId: string, role: Role): Promise<SumteoEv
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ role }),
+  });
+  return r.ok ? r.json() : null;
+}
+
+/** Control room "Acknowledge all" (admin): each id is acknowledged like a single ack; returns the updated rows. */
+export async function acknowledgeMany(ids: string[]): Promise<SumteoEvent[]> {
+  const r = await fetch(`${API}/events/ack`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ role: "admin", ids: ids.slice(0, 500) }),
+  });
+  return r.ok ? r.json() : [];
+}
+
+// Day 6 — orders, control room → guards (§2.8): a fixed text key (texts in i18n.ts), an optional note ≤ 140 chars.
+export const ORDER_KEYS = ["go_to_camera", "redirect_exit", "stop_entry", "open_lane", "clear_blockage"] as const;
+export type OrderKey = (typeof ORDER_KEYS)[number];
+export type OrderStatus = "sent" | "on_my_way" | "done";
+export const ORDER_NOTE_MAX = 140;
+
+export interface Order {
+  id: string;
+  camera_id: string;
+  zone_id: string | null;
+  event_id: string | null;
+  text_key: OrderKey;
+  note: string | null;
+  status: OrderStatus;
+  created_at: number;
+  on_my_way_at: number | null;
+  done_at: number | null;
+  by_role: string | null;
+}
+
+export async function getOrders(): Promise<Order[]> {
+  const r = await fetch(`${API}/orders?limit=50`, { cache: "no-store" });
+  return r.ok ? r.json() : [];
+}
+
+export async function sendOrder(order: { camera_id: string; text_key: OrderKey; zone_id?: string | null;
+  event_id?: string | null; note?: string }): Promise<Order | null> {
+  const r = await fetch(`${API}/orders`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...order, role: "admin" }),
+  });
+  return r.ok ? r.json() : null;
+}
+
+export async function setOrderStatus(orderId: string, status: OrderStatus): Promise<Order | null> {
+  const r = await fetch(`${API}/orders/${orderId}/status`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status, role: "security" }),
   });
   return r.ok ? r.json() : null;
 }

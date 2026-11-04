@@ -5,12 +5,13 @@ import { useState } from "react";
 import { DensityChart } from "@/components/DensityChart";
 import { KakaoMap, type LatLon, type Pin, type Ring } from "@/components/KakaoMap";
 import { SoundGate } from "@/components/TopBar";
-import { worstLevel } from "@/components/ui";
 import {
   BigCamera,
   CARD,
   CameraCard,
+  AckAllConfirm,
   CameraThumbs,
+  OrderForm,
   Clock,
   EventDetail,
   EventList,
@@ -23,19 +24,24 @@ import {
   eventText,
   eventTime,
   peakDensity,
+  worstLevel,
 } from "@/components/wall";
-import { LEVEL_COLOR, SEVERITY_COLOR, acknowledge, type Camera, type SumteoEvent } from "@/lib/api";
+import { LEVEL_COLOR, SEVERITY_COLOR, acknowledge, acknowledgeMany, type Camera, type SumteoEvent } from "@/lib/api";
 import { dict, useLang } from "@/lib/i18n";
 import { useLive } from "@/lib/useLive";
 
-const ITAEWON: LatLon = { lat: 37.5345, lon: 126.9937 };
+// The middle of the four demo cameras; one zoom step out, so every pin stays on screen with a camera card open.
+const ITAEWON: LatLon = { lat: 37.534, lon: 126.9944 };
 const SEOUL: LatLon = { lat: 37.5563, lon: 126.9852 };
 const HOTSPOT: Ring[] = [{ ...ITAEWON, radius: 700, color: "#C62828" }];
 
 export default function Admin() {
   const live = useLive("admin");
   const t = dict[useLang()];
-  const [selected, setSelected] = useState<string | null>(null);
+  // undefined = nothing chosen yet: the main camera's card is open on load (§2.12); null = closed by the user.
+  const [chosen, setChosen] = useState<string | null | undefined>(undefined);
+  const [orderFor, setOrderFor] = useState<{ camera: Camera; event?: SumteoEvent } | null>(null);
+  const [confirmAll, setConfirmAll] = useState(false);
   const [large, setLarge] = useState<string | null>(null);
   const [focus, setFocus] = useState<LatLon | null>(null);
   const [detail, setDetail] = useState<SumteoEvent | null>(null);
@@ -49,6 +55,9 @@ export default function Admin() {
   };
 
   const placed = live.cameras.filter((c) => c.location);
+  const mainCamera = live.cameras.find((c) => c.main);
+  const selected = chosen === undefined ? (mainCamera?.location ? mainCamera.id : null) : chosen;
+  const setSelected = setChosen;
   const pins: Pin[] = placed.map((c) => {
     const level = worstLevel(c);
     const d = peakDensity(c);
@@ -60,11 +69,13 @@ export default function Admin() {
       label: cameraLabel(c, c.id),
       value: d != null ? `${d.toFixed(1)}/m²` : undefined,
       tag: c.mode === "replay" ? t.replayShort : undefined,
-      pulse: level === "RED",
+      level,
+      levelText: level ? t.levels[level] : undefined,
     };
   });
   // First click on a camera icon opens its card, a second click enlarges it (§2.12 v2).
   const clickPin = (id: string) => (id === selected ? setLarge(id) : setSelected(id));
+  const camerasMainFirst = [...live.cameras].sort((a, b) => Number(!!b.main) - Number(!!a.main));
   const showCamera = (c: Camera) => {
     if (!c.location) return setLarge(c.id);
     setSelected(c.id);
@@ -78,13 +89,15 @@ export default function Admin() {
   };
 
   const sel = placed.find((c) => c.id === selected);
-  const chartCamera = sel ?? worstCamera(live.cameras);
+  const chartCamera = sel ?? mainCamera ?? worstCamera(live.cameras);
   const chartZone = chartCamera && [...chartCamera.zones].sort((a, b) => (b.density_ppm2 ?? 0) - (a.density_ppm2 ?? 0))[0];
 
   const popup = [...live.popups].sort((a, b) => (b.severity === "CRITICAL" ? 1 : 0) - (a.severity === "CRITICAL" ? 1 : 0))[0];
   const popCamera = popup && live.cameras.find((c) => c.id === popup.camera_id);
   const bigCamera = large ? live.cameras.find((c) => c.id === large) : undefined;
   const latest = live.events.find((e) => e.severity !== "INFO");
+  // Everything open: queued pop-ups plus unacknowledged WARNING / CRITICAL rows in the history.
+  const openIds = [...new Set([...live.popups, ...live.events].filter((e) => e.severity !== "INFO" && !e.acknowledged).map((e) => e.id))];
 
   return (
     <div className="fixed inset-0 flex flex-col bg-[#EEF1F4] text-[#1B2430]" style={{ fontFamily: FONT }}>
@@ -103,13 +116,13 @@ export default function Admin() {
           <LangSwitch />
         </div>
       </header>
-      <SoundGate light />
+      <SoundGate />
 
       <main className="relative min-h-0 flex-1">
         <KakaoMap
           className="absolute inset-0"
           center={ITAEWON}
-          level={3}
+          level={4}
           pins={pins}
           selected={selected}
           onPin={clickPin}
@@ -127,6 +140,8 @@ export default function Admin() {
                       onAck={ack}
                       onEnlarge={() => setLarge(sel.id)}
                       onClose={() => setSelected(null)}
+                      orders={live.orders.filter((o) => o.camera_id === sel.id)}
+                      onOrder={() => setOrderFor({ camera: sel })}
                     />
                   ),
                 }
@@ -135,7 +150,7 @@ export default function Admin() {
         />
 
         <aside className="absolute bottom-4 left-4 top-4 z-10 flex w-[320px] flex-col">
-          <EventList events={live.events} escalated={live.escalated} cameras={live.cameras} t={t} onAck={ack} onPick={pick} />
+          <EventList events={live.events} escalated={live.escalated} cameras={live.cameras} t={t} onAck={ack} onPick={pick} onAckAll={() => setConfirmAll(true)} />
         </aside>
 
         <aside className={`${CARD} absolute right-4 top-4 z-10 max-h-[calc(100%-2rem)] w-[300px] space-y-3 overflow-y-auto p-3`}>
@@ -151,7 +166,7 @@ export default function Admin() {
             <p className="mt-1.5 text-[11px] text-[#5B6675]">{t.hotspot}</p>
           </div>
           <Kpis cameras={live.cameras} openAlerts={live.popups.length} t={t} />
-          <CameraThumbs cameras={live.cameras} selected={selected} t={t} onPick={showCamera} />
+          <CameraThumbs cameras={camerasMainFirst} selected={selected} t={t} onPick={showCamera} />
           {chartCamera && chartZone && (
             <div>
               <div className="mb-1 flex items-baseline justify-between gap-2 text-[12px]">
@@ -201,16 +216,36 @@ export default function Admin() {
           more={live.popups.length - 1}
           noResponse={live.escalated.has(popup.id)}
           onAck={ack}
+          onAckAll={() => setConfirmAll(true)}
+          openCount={openIds.length}
         />
       )}
       {!popup && bigCamera && <BigCamera camera={bigCamera} t={t} onClose={() => setLarge(null)} />}
-      {!popup && !bigCamera && detail && (
+      {confirmAll && (
+        <AckAllConfirm
+          count={openIds.length}
+          t={t}
+          onCancel={() => setConfirmAll(false)}
+          onConfirm={async () => {
+            (await acknowledgeMany(openIds)).forEach(live.applyAck);
+            setConfirmAll(false);
+          }}
+        />
+      )}
+      {orderFor && (
+        <OrderForm camera={orderFor.camera} event={orderFor.event} t={t} onSent={live.applyOrder} onClose={() => setOrderFor(null)} />
+      )}
+      {!popup && !bigCamera && !orderFor && detail && (
         <EventDetail
           event={detail}
           camera={live.cameras.find((c) => c.id === detail.camera_id)}
           t={t}
           onAck={ack}
           onClose={() => setDetail(null)}
+          onOrder={() => {
+            const camera = live.cameras.find((c) => c.id === detail.camera_id);
+            if (camera) setOrderFor({ camera, event: detail });
+          }}
         />
       )}
     </div>

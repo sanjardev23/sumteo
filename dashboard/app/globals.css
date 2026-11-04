@@ -4,34 +4,51 @@ body {
   font-family: "Apple SD Gothic Neo", "Pretendard", system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* Day 6 — map pins live outside React (Kakao CustomOverlay), so they are styled here. */
+/* Day 6 — map pins live outside React (Kakao CustomOverlay), so they are styled here. A pin is a CCTV camera in a
+   white badge; the badge's border is the camera's level color and a ring pulses out of it — faster as the level rises. */
 .sumteo-pin {
   display: flex;
   align-items: center;
   gap: 6px;
-  transform: translateX(-11px);
+  transform: translateX(-16px);
   cursor: pointer;
   font: 500 12px/1 var(--font-plex), "Apple SD Gothic Neo", system-ui, sans-serif;
   color: #1b2430;
   white-space: nowrap;
 }
-.sumteo-pin-dot {
+.sumteo-pin-cam {
   position: relative;
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--c);
+  border-radius: 9px;
   background: #fff;
-  border: 1px solid #c5cdd8;
-  box-shadow: 0 1px 3px rgb(16 24 40 / 0.25);
+  color: #1b2430;
+  box-shadow: 0 2px 6px rgb(16 24 40 / 0.28);
 }
-.sumteo-pin-dot::after {
+.sumteo-pin-cam svg {
+  width: 18px;
+  height: 18px;
+}
+.sumteo-pin-cam::before {
   content: "";
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: var(--c);
+  position: absolute;
+  inset: -3px;
+  border: 3px solid var(--c);
+  border-radius: 11px;
+  animation: sumteo-ring var(--ring, 2.6s) ease-out infinite;
+}
+.sumteo-pin.is-orange { --ring: 1.5s; }
+.sumteo-pin.is-red { --ring: 0.9s; }
+.sumteo-pin.is-red .sumteo-pin-cam { box-shadow: 0 0 0 2px rgb(198 40 40 / 0.18), 0 2px 6px rgb(16 24 40 / 0.28); }
+@keyframes sumteo-ring {
+  from { transform: scale(1); opacity: 0.85; }
+  to { transform: scale(1.75); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sumteo-pin-cam::before { animation: none; opacity: 0; }
 }
 .sumteo-pin-label {
   padding: 4px 6px;
@@ -56,26 +73,12 @@ body {
   font-weight: 600;
   letter-spacing: 0.03em;
 }
-.sumteo-pin.is-selected .sumteo-pin-dot {
-  border: 2px solid #1d4f91;
+.sumteo-pin.is-selected .sumteo-pin-cam {
+  outline: 2px solid #1d4f91;
+  outline-offset: 2px;
 }
 .sumteo-pin.is-selected .sumteo-pin-label {
   border-color: #1d4f91;
-}
-.sumteo-pin.is-pulse .sumteo-pin-dot::before {
-  content: "";
-  position: absolute;
-  inset: -6px;
-  border: 2px solid var(--c);
-  border-radius: 50%;
-  animation: sumteo-pulse 1.6s ease-out infinite;
-}
-@keyframes sumteo-pulse {
-  from { transform: scale(0.7); opacity: 0.9; }
-  to { transform: scale(1.5); opacity: 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .sumteo-pin.is-pulse .sumteo-pin-dot::before { animation: none; opacity: 0.6; }
 }
 /* The camera card hangs centred under its pin. The anchor box has no size, so Kakao's wrapper around it can't
    cover the pin and swallow the second click; Kakao sets nowrap on overlays, the card needs normal wrapping. */
@@ -86,11 +89,70 @@ body {
 }
 .sumteo-popup > * {
   position: absolute;
-  top: 18px;
+  top: 24px;
   left: 0;
   transform: translateX(-50%);
 }
 /* Kakao has no map styles: mute the base tiles so the level colors are the loudest thing on screen. */
 .sumteo-map img[src*="kakaocdn.net"][src*="/tile/"] {
   filter: saturate(0.3) contrast(0.92) brightness(1.04);
+}
+
+/* Day 6 — landing motion (§2.12). Explanatory and first-visit only, so a little longer than UI motion; strong
+   ease-out, transform/opacity only, short staggers, and nothing moves under reduced motion. */
+:root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+}
+.sumteo-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 600ms var(--ease-out), transform 600ms var(--ease-out);
+}
+.sumteo-reveal[data-shown="true"] {
+  opacity: 1;
+  transform: none;
+}
+/* The memorial photo opens top-down and always ends whole. */
+.sumteo-wipe {
+  clip-path: inset(0 0 100% 0);
+  transition: clip-path 1100ms var(--ease-in-out) 120ms;
+}
+.sumteo-reveal[data-shown="true"] .sumteo-wipe {
+  clip-path: inset(0 0 0 0);
+}
+/* Density illustration: people appear from a slightly smaller size, never from nothing. */
+.sumteo-dot {
+  opacity: 0;
+  transform: scale(0.6);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 320ms var(--ease-out), transform 320ms var(--ease-out), fill 400ms ease;
+}
+.sumteo-dot[data-on="true"] {
+  opacity: 0.9;
+  transform: scale(1);
+}
+/* Pipeline: a pulse travels the line, constant motion → linear. */
+.sumteo-pulse {
+  left: -6rem;
+  animation: sumteo-travel 3.2s linear infinite;
+}
+@keyframes sumteo-travel {
+  to { transform: translateX(calc(100cqw + 6rem)); }
+}
+.sumteo-press {
+  transition-property: transform, border-color, box-shadow, background-color;
+  transition-duration: 160ms;
+  transition-timing-function: var(--ease-out);
+}
+.sumteo-press:active {
+  transform: scale(0.97);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sumteo-reveal { transform: none; transition: opacity 300ms ease; }
+  .sumteo-wipe { clip-path: none; transition: none; }
+  .sumteo-dot { transform: none; transition: opacity 200ms ease; }
+  .sumteo-pulse { animation: none; display: none; }
+  .sumteo-press:active { transform: none; }
 }

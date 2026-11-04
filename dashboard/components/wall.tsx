@@ -1,15 +1,20 @@
 "use client";
 // Day 6 — control-wall pieces (ARCHITECTURE §2.12 v2): light cards floating on the map.
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { worstLevel } from "@/components/ui";
 import {
   LEVEL_COLOR,
+  ORDER_KEYS,
+  ORDER_NOTE_MAX,
   SEVERITY_COLOR,
   frameUrl,
+  sendOrder,
   snapshotUrl,
   streamUrl,
   type Camera,
   type Level,
+  type Order,
+  type OrderKey,
+  type OrderStatus,
   type SumteoEvent,
   type Zone,
 } from "@/lib/api";
@@ -17,6 +22,12 @@ import { setLang, useLang, type Dict } from "@/lib/i18n";
 
 export const CARD = "rounded-lg border border-[#D5DBE3] bg-white shadow-[0_1px_3px_rgb(16_24_40/0.08),0_4px_12px_rgb(16_24_40/0.06)]";
 const LEVELS: Level[] = ["GREEN", "YELLOW", "ORANGE", "RED"];
+
+export function worstLevel(camera: Camera): Level | null {
+  const order: Level[] = ["GREEN", "YELLOW", "ORANGE", "RED"];
+  const levels = camera.zones.map((z) => z.level).filter((l): l is Level => !!l);
+  return levels.length ? levels.reduce((a, b) => (order.indexOf(b) > order.indexOf(a) ? b : a)) : null;
+}
 
 export const cameraLabel = (c: Camera | undefined, id: string) => c?.location?.label || c?.name || id;
 
@@ -127,6 +138,7 @@ export function EventList({
   t,
   onAck,
   onPick,
+  onAckAll,
 }: {
   events: SumteoEvent[];
   escalated: Set<string>;
@@ -134,9 +146,11 @@ export function EventList({
   t: Dict;
   onAck: (e: SumteoEvent) => void;
   onPick: (e: SumteoEvent) => void;
+  onAckAll?: () => void;
 }) {
   const [filter, setFilter] = useState<Filter>("all");
   const shown = events.filter(keep[filter]).slice(0, 100);
+  const open = events.filter(keep.open).length;
   return (
     <section className={`${CARD} flex min-h-0 flex-1 flex-col`}>
       <div className="flex items-center justify-between gap-2 border-b border-[#E3E8EE] px-3 py-2.5">
@@ -155,6 +169,14 @@ export function EventList({
           ))}
         </div>
       </div>
+      {onAckAll && open > 0 && (
+        <div className="flex items-center justify-between gap-2 border-b border-[#E3E8EE] bg-[#F7F9FC] px-3 py-1.5 text-[11px]">
+          <span className="text-[#5B6675]">{t.openCount(open)}</span>
+          <button onClick={onAckAll} className="sumteo-press rounded border border-[#1D4F91] px-2 py-0.5 font-medium text-[#1D4F91] hover:bg-[#1D4F91] hover:text-white">
+            {t.ackAll(open)}
+          </button>
+        </div>
+      )}
       {!shown.length && <p className="px-3 py-4 text-[12px] text-[#5B6675]">{t.noEvents}</p>}
       <ul className="min-h-0 flex-1 overflow-y-auto">
         {shown.map((e) => {
@@ -246,6 +268,8 @@ export function CameraCard({
   onAck,
   onEnlarge,
   onClose,
+  orders = [],
+  onOrder,
 }: {
   camera: Camera;
   open?: SumteoEvent;
@@ -253,6 +277,8 @@ export function CameraCard({
   onAck: (e: SumteoEvent) => void;
   onEnlarge: () => void;
   onClose: () => void;
+  orders?: Order[];
+  onOrder?: () => void;
 }) {
   return (
     <div className={`${CARD} w-[290px] overflow-hidden text-[#1B2430] shadow-lg`} style={{ fontFamily: FONT }}>
@@ -298,6 +324,15 @@ export function CameraCard({
             </button>
           )}
         </div>
+        {onOrder && (
+          <button
+            onClick={onOrder}
+            className="w-full rounded border border-[#1D4F91] py-1.5 text-[12px] font-medium text-[#1D4F91] hover:bg-[#EEF3FA]"
+          >
+            {t.sendOrder}
+          </button>
+        )}
+        <OrderRows orders={orders.slice(0, 2)} t={t} />
       </div>
     </div>
   );
@@ -385,12 +420,14 @@ export function EventDetail({
   t,
   onAck,
   onClose,
+  onOrder,
 }: {
   event: SumteoEvent;
   camera?: Camera;
   t: Dict;
   onAck: (e: SumteoEvent) => void;
   onClose: () => void;
+  onOrder?: () => void;
 }) {
   const snap = snapshotUrl(event.snapshot_path);
   const { escalated, escalated_at } = event.details;
@@ -447,6 +484,162 @@ export function EventDetail({
           {t.acknowledge}
         </button>
       )}
+      {onOrder && (
+        <button
+          onClick={onOrder}
+          className="mt-2 w-full rounded border border-[#1D4F91] py-2 text-[14px] font-medium text-[#1D4F91] hover:bg-[#EEF3FA]"
+        >
+          {t.sendOrder}
+        </button>
+      )}
+    </LightModal>
+  );
+}
+
+/** "Acknowledge all" asks once: clearing many alerts in one click must be a decision, not a slip. */
+export function AckAllConfirm({ count, t, onConfirm, onCancel }: { count: number; t: Dict; onConfirm: () => void; onCancel: () => void }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <LightModal onClose={onCancel}>
+      <h2 className="text-[18px] font-semibold">{t.ackAllTitle}</h2>
+      <p className="mt-2 text-[13px] leading-relaxed text-[#3A4553]">{t.ackAllText(count)}</p>
+      <div className="mt-4 flex justify-end gap-2">
+        <button onClick={onCancel} className="rounded px-4 py-2 text-[13px] text-[#5B6675] hover:text-[#1B2430]">
+          {t.cancel}
+        </button>
+        <button
+          disabled={busy}
+          onClick={() => {
+            setBusy(true);
+            onConfirm();
+          }}
+          className="sumteo-press rounded bg-[#1D4F91] px-5 py-2 text-[13px] font-semibold text-white hover:bg-[#163E73] disabled:opacity-50"
+        >
+          {t.ackAll(count)}
+        </button>
+      </div>
+    </LightModal>
+  );
+}
+
+/** The camera's latest blurred frame every 2 s: light on a phone, holds no MJPEG connection open (§2.12). */
+export function LiveFrame({ camera, className = "" }: { camera: Camera; className?: string }) {
+  const stamp = useSyncExternalStore(thumbTick, thumbStamp, () => 0);
+  return (
+    <div className={`bg-[#1B2430] ${className}`}>
+      {stamp > 0 && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`${frameUrl(camera.id)}?t=${stamp}`} alt={camera.name} className="size-full object-contain" />
+      )}
+    </div>
+  );
+}
+
+const ORDER_STATUS_STYLE: Record<OrderStatus, string> = {
+  sent: "border-[#1D4F91] text-[#1D4F91]",
+  on_my_way: "border-[#B98900] bg-[#FFF6E0] text-[#7A5A00]",
+  done: "border-[#2E7D32] bg-[#EEF7EE] text-[#2E7D32]",
+};
+
+export function OrderStatusTag({ status, t }: { status: OrderStatus; t: Dict }) {
+  return <span className={`rounded border px-1.5 py-px text-[10px] font-semibold ${ORDER_STATUS_STYLE[status]}`}>{t.orderStatus[status]}</span>;
+}
+
+export const wallClock = (epoch: number) =>
+  new Date(epoch * 1000).toLocaleTimeString("en-GB", { hour12: false, timeZone: "Asia/Seoul" });
+
+export function OrderRows({ orders, t }: { orders: Order[]; t: Dict }) {
+  if (!orders.length) return null;
+  return (
+    <ul className="space-y-1 border-t border-[#E3E8EE] pt-2">
+      {orders.map((o) => (
+        <li key={o.id} className="flex items-center justify-between gap-2 text-[11px]">
+          <span className="min-w-0 truncate">{t.orderTexts[o.text_key]}</span>
+          <span className="flex shrink-0 items-center gap-1.5 tabular-nums text-[#5B6675]">
+            {wallClock(o.done_at ?? o.on_my_way_at ?? o.created_at)}
+            <OrderStatusTag status={o.status} t={t} />
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Control room → guards (§2.8): one of the fixed orders, optional short note. */
+export function OrderForm({
+  camera,
+  event,
+  t,
+  onSent,
+  onClose,
+}: {
+  camera: Camera;
+  event?: SumteoEvent;
+  t: Dict;
+  onSent: (o: Order) => void;
+  onClose: () => void;
+}) {
+  const [key, setKey] = useState<OrderKey>("go_to_camera");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const send = async () => {
+    setBusy(true);
+    const order = await sendOrder({
+      camera_id: camera.id,
+      zone_id: event?.zone_id ?? camera.zones[0]?.id ?? null,
+      event_id: event?.id ?? null,
+      text_key: key,
+      note: note.trim() || undefined,
+    });
+    setBusy(false);
+    if (order) {
+      onSent(order);
+      onClose();
+    }
+  };
+  return (
+    <LightModal onClose={onClose}>
+      <h2 className="text-[18px] font-semibold">{t.sendOrder}</h2>
+      <p className="mb-3 text-[12px] text-[#5B6675]">
+        {cameraLabel(camera, camera.id)}
+        {event && ` · ${t.severity[event.severity]} ${eventTime(event)}`}
+      </p>
+      <div className="mb-3 grid gap-1.5 sm:grid-cols-2">
+        {ORDER_KEYS.map((k) => (
+          <button
+            key={k}
+            onClick={() => setKey(k)}
+            className={`rounded border px-3 py-2 text-left text-[13px] ${
+              k === key ? "border-[#1D4F91] bg-[#EEF3FA] font-medium text-[#1D4F91]" : "border-[#D5DBE3] hover:border-[#9AA4B2]"
+            }`}
+          >
+            {t.orderTexts[k]}
+          </button>
+        ))}
+      </div>
+      <textarea
+        value={note}
+        maxLength={ORDER_NOTE_MAX}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder={t.notePlaceholder}
+        rows={2}
+        className="w-full rounded border border-[#D5DBE3] px-3 py-2 text-[13px] outline-none focus:border-[#1D4F91]"
+      />
+      <div className="mb-3 text-right text-[11px] tabular-nums text-[#8A94A3]">
+        {note.length} / {ORDER_NOTE_MAX}
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onClose} className="rounded px-4 py-2 text-[13px] text-[#5B6675] hover:text-[#1B2430]">
+          {t.cancel}
+        </button>
+        <button
+          onClick={send}
+          disabled={busy}
+          className="rounded bg-[#1D4F91] px-5 py-2 text-[13px] font-semibold text-white hover:bg-[#163E73] disabled:opacity-50"
+        >
+          {t.send}
+        </button>
+      </div>
     </LightModal>
   );
 }
@@ -497,6 +690,8 @@ export function BigCamera({
   noResponse = false,
   onAck,
   onClose,
+  onAckAll,
+  openCount = 0,
 }: {
   camera: Camera;
   t: Dict;
@@ -505,6 +700,8 @@ export function BigCamera({
   noResponse?: boolean;
   onAck?: (e: SumteoEvent) => void;
   onClose?: () => void;
+  onAckAll?: () => void;
+  openCount?: number; // all open alerts, so the button says exactly what "Acknowledge all" will clear
 }) {
   return (
     <LightModal onClose={event ? undefined : onClose}>
@@ -515,6 +712,11 @@ export function BigCamera({
               {noResponse && <span className="rounded bg-[#C62828] px-1.5 text-white">{t.noResponse}</span>}
               {t.severity[event.severity]} · {eventText(event, t)}
               {more > 0 && <span className="font-normal text-[#5B6675]">+{more} {t.moreWaiting}</span>}
+              {more > 0 && onAckAll && openCount > 1 && (
+                <button onClick={onAckAll} className="sumteo-press rounded border border-[#1D4F91] px-2 py-0.5 text-[11px] font-medium text-[#1D4F91] hover:bg-[#1D4F91] hover:text-white">
+                  {t.ackAll(openCount)}
+                </button>
+              )}
             </div>
           )}
           <h2 className="text-[18px] font-semibold">{cameraLabel(camera, camera.id)}</h2>
