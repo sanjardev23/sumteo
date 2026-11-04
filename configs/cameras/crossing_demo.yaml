@@ -1,34 +1,42 @@
 # calibration and zones are written by scripts/calibrate.py; risk flags are edited by hand
+# crowd_07 calibration (Day 6) was set by hand: 4 stripe corners of the near crosswalk. Along the band, 7 stripe
+# periods at the Japanese 45 + 45 cm standard = 6.3 m (measured period 131-148 px). Across the band, 4.2 m from
+# person heights (~1.6-1.7 m -> ~22 deg look-down); an estimate, about +-25%.
 id: crossing-demo-1
-name: Scramble crossing (demo)
-source: data/raw/crowd_06.mp4
-location: {lat: 37.53436, lon: 126.99625, label: "Itaewon-ro east", clip: "stock clip (Shibuya scramble, Pexels), demo position"}
+name: Pedestrian crossing (demo)
+source: data/raw/crowd_07.mp4
+location: {lat: 37.53436, lon: 126.99625, label: "Itaewon-ro east", clip: "CroHD HT21-03 (MOTChallenge, CC BY-NC-SA 3.0), demo position"}
 calibration:
   image_points:
-  - [273.0, 852.0]
-  - [447.0, 852.0]
-  - [451.0, 998.0]
-  - [261.0, 998.0]
+  - [488.0, 795.0]
+  - [1404.0, 795.0]
+  - [1437.0, 1022.0]
+  - [408.0, 1022.0]
   world_points:
   - [0.0, 0.0]
-  - [6.0, 0.0]
-  - [6.0, 6.0]
-  - [0.0, 6.0]
+  - [6.3, 0.0]
+  - [6.3, 4.2]
+  - [0.0, 4.2]
 zones:
 - id: crossing
   polygon:
-  - [240.0, 800.0]
-  - [480.0, 800.0]
-  - [480.0, 1040.0]
-  - [240.0, 1040.0]
+  - [100.0, 330.0]
+  - [1880.0, 330.0]
+  - [1910.0, 1025.0]
+  - [330.0, 1025.0]
   risk: {slope: false, narrow: false, bottleneck: false}
   entry_line: []
   exit_line: []
 overrides:
-  models: {density: models/dmcount_nwpu.pth}
+  # Camera property (Day 6, user decision): file sources process every kept frame, so a camera slower than its
+  # target_fps plays late. crowd_07 at 1080p runs ~4 FPS, so it keeps 5 frames/s; flow then runs on every kept frame
+  # (0.2 s pairs) and density every 10 kept frames (2 s). ByteTrack's 30-frame buffer becomes 6 s at this rate.
+  runtime: {target_fps: 5}
+  models: {density: models/dmcount_nwpu.pth, flow_every_n_frames: 1, density_every_n_frames: 10}
   crowd:
-    levels_ppm2: {yellow: 0.3, orange: 0.6, red: 0.75}
-    hysteresis_ppm2: 0.06
+    # demo-only (DATA §2): 0.085 x the real values, so the crowd_07 build-up runs GREEN -> RED -> YELLOW
+    levels_ppm2: {yellow: 0.17, orange: 0.34, red: 0.425}
+    hysteresis_ppm2: 0.034
     switch_density_ppm2: 0.0
-    rise_ppm2_per_min: 0.15
-    rise_min_density: 0.3
+    rise_ppm2_per_min: 0.085
+    rise_min_density: 0.17

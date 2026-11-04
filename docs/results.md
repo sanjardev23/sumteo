@@ -54,6 +54,33 @@ properties. *Diagnostic after the held-out run (not a result, nothing was change
 two frames count SH-B 24 / 18, SH-A 51 / 35, **NWPU 72 / 56** (by eye 65 / 63). So high, top-down cameras need the
 camera properties crossing_demo has — `switch_density_ppm2: 0` and NWPU weights — as part of camera setup.
 
+**Held-out on real CCTV (Day 6)** — crowd_07 = CroHD HT21-03, a fixed elevated camera over a crowded crossing
+(1920×1080, 40 s), labelled heads from the dataset. Real thresholds, camera properties NWPU + switch 0, zone
+223.7 m². Protocol fixed and recorded before the run (ARCHITECTURE §5), run **once**. Label = ground-truth pedestrian
+heads whose estimated foot point is inside the zone, at each window's midpoint frame. Pedestrian = class 1; class 4
+is left out as "Ignore" (inferred from the class order in the CroHD paper), which changed 3 windows by −1.
+
+| Window | 0–5 s | 5–10 | 10–15 | 15–20 | 20–25 | 25–30 | 30–35 | 35–40 |
+|---|---|---|---|---|---|---|---|---|
+| Label (people in zone) | 71 | 138 | 208 | 243 | 216 | 161 | 123 | 86 |
+| System count | 46.3 | 74.7 | 91.9 | 97.7 | 113.9 | 86.9 | 73.6 | 51.4 |
+| System ÷ label | 0.65 | 0.54 | 0.44 | 0.40 | 0.53 | 0.54 | 0.60 | 0.60 |
+
+Level accuracy 8 / 8 (**trivial**: the crowd peaks at about 1.1 people/m², GREEN on real thresholds), no false
+alarms in 40 s. **Count MAE 76.2, mean error −76.2: about −49% of the mean label (155.8).**
+
+**Finding:** on real CCTV the system follows the build-up and the clearing, but counts about half the people, and
+the gap grows with the crowd (0.65 of the label at 71 people, 0.40 at 243), likely occlusion in the densest part (the
+cause is not measured). The system's peak comes 5 s later than the label's (the 5 s median smoothing). So an absolute
+people/m² reading from this camera is low by about a factor of 2, which matters for real thresholds. The shape over
+time holds, but DENSITY_RISING compares a people/m² per minute rate with a fixed threshold, so a half count also
+halves the rise rate and the rule fires late. Only the flow rules (speed, turbulence, counter-flow) don't depend on
+the count.
+
+Limits: the ground truth includes partly occluded heads, so it counts more than any camera can see; zone membership
+near the edge depends on the foot-point estimate; one camera, 40 s. The density reading (count ÷ area) also carries the
+area uncertainty of this calibration (about ±30%), which the count comparison above does not.
+
 ## Alerts (Day 4)
 
 Stock footage has no real level changes, so alert timing is measured on **crossing_demo with its DEMO thresholds**
