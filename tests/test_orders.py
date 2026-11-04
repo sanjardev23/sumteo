@@ -107,3 +107,18 @@ def test_admin_acknowledges_open_alerts_in_bulk(client, tmp_path):
     assert rows[0]["acknowledged_by"] == "security"                               # first ack still wins
     assert {r["acknowledged_by"] for r in rows[1:]} == {"admin"}
     assert [r["acknowledged_via"] for r in rows] == ["single", "bulk", "bulk"]     # audit: bulk ≠ reviewed
+
+
+
+def test_signboard_names_the_place_and_says_live_or_replay(client):
+    """Public signboard (§2.12): level text in Korean and English, the place, the DEMO and REPLAY flags."""
+    from sumteo.api.server import signboard_view
+    state = {"id": "crossing-demo-1", "mode": "replay", "demo": {"overridden": True},
+             "location": {"label": "Itaewon-ro east"}, "zones": [{"id": "crossing", "level": "RED"}]}
+    board = signboard_view([state], "crossing")
+    assert board["camera"] == "crossing-demo-1" and board["place"] == "Itaewon-ro east"
+    assert board["level"] == "RED" and board["message_ko"] and board["message_en"]
+    assert board["replay"] is True and board["demo"] is True
+    assert signboard_view([{**state, "zones": [{"id": "crossing", "level": None}]}], "crossing")["level"] == "GREEN"
+    assert signboard_view([state], "nowhere") is None
+    assert client.get("/signboard/nowhere").status_code == 404

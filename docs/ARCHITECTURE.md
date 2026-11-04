@@ -294,7 +294,8 @@ and role so each group only gets what it must act on. Routes live in config `not
 - **Acknowledge:** an alert stays highlighted until someone acknowledges it; who and when is stored.
   **Acknowledge all** (Day 6, user: 90+ open alerts as admin): admin only, after a confirm dialog ("… their escalations
   stop. Check the map for any camera still RED first."); each id goes through the single-ack path (first ack wins,
-  escalation cancelled, `ack` to every client). Audit: `events.acknowledged_via` = `single` | `bulk` (NULL for acks
+  escalation cancelled, `ack` to every client). No guard for still-active CRITICALs and no replay auto-close (user,
+  Day 6: "red is enough for alerts" — the map's RED pins stay the cue; the confirm dialog says to check them). Audit: `events.acknowledged_via` = `single` | `bulk` (NULL for acks
   from before the column), so a bulk ack never reads as individually reviewed.
 - **Escalation** (`events/escalation.py` — `AckTracker`, API process, **wall clock** since acks are human time): any
   CRITICAL not acknowledged within `ack_timeout_s` is re-sent **once** to admin as an `escalation` message; the DB
@@ -377,7 +378,7 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
   | `POST /orders` | body `{camera_id, zone_id?, event_id?, text_key, note?, role: "admin"}` — admin only; stored with status `sent` (§2.8) |
   | `POST /orders/{id}/status` | body `{status: "on_my_way" \| "done", role: "security"}` — forward only, stores the step's wall time |
   | `GET /orders?camera=&status=` | order history |
-  | `GET /signboard/{zone}` | `{zone, camera, level, label, message_ko, message_en, demo}` |
+  | `GET /signboard/{zone}` | `{zone, camera, place, level, label, message_ko, message_en, demo, replay}` (`signboard_view()`); the page shows the place, the DEMO and "REPLAY — recorded run · 재생" lines, and "Unknown zone" on 404; `/admin` camera cards link each zone's signboard |
   | `WS /ws?role=security\|admin` | `hello` (all camera states + `open`: unacknowledged WARNING / CRITICAL events routed to that role since the server started — `Storage.open_alerts`), `camera` (one state, every second, all roles), `event` (routed by role), `ack` (all roles), `escalation` (admin), `order` (security), `order_update` (all roles) |
 
 
@@ -403,7 +404,8 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
   different sha256 ("recording is stale, re-record (different file at …)"), so the same path can't hide different weights
   or a different clip. Files missing here are skipped, which is what the replay-only Docker image needs (no weights or clips).
   The replay path is import-light: torch and ultralytics load only in the live worker (`camera_main`).
-  Raw frames and identities are never stored (§2.10). Recordings live in `data/recordings/` (git-ignored); a recording of
+  Raw frames and identities are never stored (§2.10). Recordings live in `data/recordings/` (git-ignored) and are **not
+  published** (user decision, Day 6): anyone running the demo records them first, on Colab or locally. A recording of
   crowd_07 is CroHD-derived, so CC BY-NC-SA 3.0 (DATA.md §2).
 - **Record = the solo test:** a camera's recording run is its on-its-own test (pipeline + levels + alerts, §2.12); a
   camera joins the dashboard only with a recording that passed.
@@ -470,7 +472,8 @@ no role-pick note (user); credits for CroHD (CC BY-NC-SA 3.0), Pexels and Kakao 
 - **Demo tag:** every view that shows a camera's level carries the same red "DEMO THRESHOLDS … (not the real levels)"
   line as the overlay (§2.1) when that camera overrides `crowd.levels_ppm2`
 - **Replay tag:** every view of a replayed camera carries "REPLAY — recorded run" (§2.11, *Replay mode*); only live
-  cameras show "live"
+  cameras show "live". Header status (`/admin`, `/security`): no live camera → "Connected · REPLAY" (grey); some →
+  "Live N · REPLAY M"; all → "Live" (green); disconnected → "Reconnecting…"
 - **Public signboard page** (extra): full-screen level + short instruction in Korean and English
   (e.g. "Crowded — use exit B →"), the way district signboards guide people away from a jam
 
@@ -515,7 +518,7 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
 
   | Camera | Position (lat, lon) | Label | Thresholds |
   |---|---|---|---|
-  | test_crowd_03 | 37.53452, 126.99345 | Itaewon-ro at Exit 1 (alley entrance) | real, stays GREEN — reads 0.01–0.04 /m² against ~0.24 by eye (the high-view under-count, §2.2), so calm by setup, not measured calm |
+  | test_crowd_03 | 37.53452, 126.99345 | Itaewon-ro at Exit 1 (alley entrance) | real, stays GREEN — first recording read 0.01–0.04 /m² against ~0.24 by eye (high-view under-count, §2.2); re-recorded with NWPU + switch 0 (Day 6) |
   | test_crowd_04 | 37.53500, 126.99250 | World Food Street (~90 m west of the alley's north end) | real |
   | crossing_demo | 37.53436, 126.99625 | Itaewon-ro east | **demo** (0.17 / 0.34 / 0.425, crowd_07) — the demo RED |
   | crowd_demo | 37.53300, 126.99445 | Bogwang-ro | **demo** (1.0 / 2.0 / 3.0) |
@@ -541,6 +544,16 @@ rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd
 Seoul's real-time city data (data.seoul.go.kr, free API key) gives a 4-level congestion label for ~120 hotspots,
 estimated from mobile signals, updated every 5 min with ~15 min delay. Shown next to our live level as the
 "wider area" view: our camera is precise and second-by-second, the city data is broad and slow.
+- **Built (Day 6):** `city/seoul.py` — `parse()` reads `citydata_ppltn` (`AREA_CONGEST_LVL` 여유 / 보통 / 약간 붐빔 / 붐빔 →
+  Relaxed / Normal / Slightly crowded / Crowded, message, `AREA_PPLTN_MIN/MAX`, `PPLTN_TIME`); `CityData` polls every
+  `city_data.poll_seconds` (300) in the API process, only with `city_data.enabled`, `SEOUL_API_KEY` (`.env`, read by
+  `serve.py`) and an `area` (default `이태원 관광특구`). A failed poll keeps the last good answer, marked with the error
+  type; errors never include the request URL (it holds the key). Outside the config hash.
+- `GET /city` → `{status: off | waiting | ok | error, area, level_ko, level_en, message, people_min, people_max,
+  measured_at, fetched_at, error}`.
+- `/admin`: a separate panel under the Seoul mini-map — area, label, min–max people, time, and "mobile-signal estimate
+  for the whole area · every 5 min, ~15 min late"; **no level colours**, so it is never read as our level. Without a
+  key: "City data off — add SEOUL_API_KEY to .env".
 
 ---
 
@@ -560,6 +573,10 @@ dashboard (`next build && next start` for the demo — `next dev` recompiles and
 run_camera.py --camera …                       (single camera, local window, no API)
 record_camera.py --camera … --out …           (one camera, offline, laptop or Colab → data/recordings/<id>/)
 docker compose up                             (replay-only demo: API + dashboard, no models — Docker on a Mac has no MPS)
+   ├─ api: python:3.12-slim, no torch / ultralytics, opencv-headless; `serve.py --host 0.0.0.0` inside, published on
+   │       127.0.0.1:8000; ./data/recordings mounted read-only; own SQLite + snapshots in the volume `sumteo-data`
+   └─ dashboard: `npm ci && next build`, `next start`, 127.0.0.1:3000; the Kakao key is baked in at build time from
+           dashboard/.env.local, so the image is never pushed to a public registry
 ```
 **Why processes, not threads** (measured, Day 5): two cameras as threads in the API ran 4.9 + 3.2 FPS — the
 Python-heavy parts serialize on the GIL; as processes 8.8 + 4.1 FPS (alone 14.9 / 6.6; the shared GPU is the remaining
@@ -616,7 +633,9 @@ stock footage can't tune ORANGE/RED.
 count MAE 51.0 (system 9 / 17 vs 65 / 63 by eye, about −80%); 0 false alarms in 23 s. The failure is the camera setup,
 not the model: from this height detection finds 1 in 4–7 people, and the switch rule kept detection below 2.5 /m² (the default then; at 2.0 the result is the same — SH-B read 0.07–0.09 /m²)
 (§2.2). The result stands as measured; the held-out set is **not** re-run with fixed configs — that would turn it into
-tuning data. A fix applies to the next camera.
+tuning data. A fix applies to the next camera. **Day 6 (user decision):** for the demo recordings only, test_crowd_03 / 04
+get the camera properties (NWPU + switch 0; real thresholds, no DEMO tag) and are re-recorded; the held-out numbers
+above stay as measured with the Day 4 config, and the new recordings are not an evaluation.
 
 **Held-out on real CCTV — crowd_07 (Day 6, user decision "Run once, held-out"):** the protocol is fixed before anything
 runs, and nothing is changed after.

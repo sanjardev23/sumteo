@@ -15,7 +15,7 @@ calibration:
   - [6.0, 6.0]
   - [0.0, 6.0]
 zones:
-- id: plaza
+- id: exit1
   polygon:
   - [900.0, 190.0]
   - [1700.0, 190.0]
@@ -24,3 +24,8 @@ zones:
   risk: {slope: false, narrow: false, bottleneck: false}
   entry_line: []
   exit_line: []
+overrides:
+  # Camera property (Day 6, user decision, demo recording only): a high, wide view where YOLO finds 1 in 4-7 people,
+  # so density counts at every level, with NWPU weights (the held-out finding, results.md). Thresholds stay real.
+  models: {density: models/dmcount_nwpu.pth}
+  crowd: {switch_density_ppm2: 0.0}

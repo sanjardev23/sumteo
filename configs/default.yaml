@@ -66,8 +66,8 @@ notifiers:
   dashboard_url: http://127.0.0.1:3000
 
 city_data:
-  enabled: false                  # Seoul real-time city data (needs SEOUL_API_KEY)
-  area: ""                        # hotspot name, e.g. 이태원 관광특구
+  enabled: true                   # Seoul real-time city data (§2.13); polls only when SEOUL_API_KEY is set (.env)
+  area: 이태원 관광특구             # hotspot name as data.seoul.go.kr lists it
   poll_seconds: 300
 
 verify:

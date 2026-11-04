@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import multiprocessing as mp
+import os
 import queue as queue_errors
 import threading
 import time
@@ -28,6 +29,7 @@ from pydantic import BaseModel
 from sumteo.analytics.crowd import CrowdLevel
 from sumteo.api.hub import Hub
 from sumteo.api.replay import load_recording, replay_main
+from sumteo.city.seoul import CityData
 from sumteo.config import load_config
 from sumteo.events.escalation import AckTracker
 from sumteo.events.notifiers.platform import ROLES, PlatformNotifier, put_reliably, roles_for
@@ -47,6 +49,19 @@ SIGNBOARD = {            # public signboard text per level (§2.12)
     "ORANGE": ("매우 혼잡 — 다른 길을 이용하세요", "Very crowded — use another route"),
     "RED": ("위험 — 진입하지 마세요, 안내에 따르세요", "Danger — do not enter, follow staff"),
 }
+
+
+def signboard_view(states, zone_id: str) -> dict | None:
+    """The public signboard for one zone (§2.12), from the latest camera states; None if no camera has that zone."""
+    for state in states:
+        for zone in state["zones"]:
+            if zone["id"] == zone_id:
+                level = zone["level"] or CrowdLevel.GREEN.value
+                ko, en = SIGNBOARD[level]
+                return {"zone": zone_id, "camera": state["id"], "place": (state.get("location") or {}).get("label"),
+                        "level": level, "label": CrowdLevel[level].label, "message_ko": ko, "message_en": en,
+                        "demo": state["demo"]["overridden"], "replay": state["mode"] == "replay"}
+    return None
 
 
 def camera_main(camera_path: str, default_path: str, out) -> None:
@@ -141,6 +156,7 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
     main_camera = defaults.api.get("main_camera")
     tracker = AckTracker(defaults.notifiers["ack_timeout_s"])
     storage = Storage(defaults.storage["db_path"])
+    city = CityData(defaults.city_data, os.environ.get("SEOUL_API_KEY"))
     snapshot_dir = Path(defaults.events["snapshot_dir"])
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     ctx = mp.get_context("spawn")
@@ -192,9 +208,10 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
         for camera_id, worker in workers.items():
             worker.start()
             threading.Thread(target=read, args=(camera_id,), name=f"read-{camera_id}", daemon=True).start()
-        task = asyncio.create_task(escalate())
+        tasks = [asyncio.create_task(escalate())] + ([asyncio.create_task(city.run())] if city.enabled else [])
         yield
-        task.cancel()
+        for task in tasks:
+            task.cancel()
         for worker in workers.values():
             worker.terminate()
 
@@ -319,16 +336,16 @@ def create_app(camera_paths: list[str], default_path: str = "configs/default.yam
         _known(camera_id)
         return storage.metrics(camera_id, since)
 
+    @app.get("/city")
+    async def city_data() -> dict:
+        return city.view()
+
     @app.get("/signboard/{zone_id}")
     async def signboard(zone_id: str) -> dict:
-        for state in states.values():
-            for zone in state["zones"]:
-                if zone["id"] == zone_id:
-                    level = zone["level"] or CrowdLevel.GREEN.value
-                    ko, en = SIGNBOARD[level]
-                    return {"zone": zone_id, "camera": state["id"], "level": level, "label": CrowdLevel[level].label,
-                            "message_ko": ko, "message_en": en, "demo": state["demo"]["overridden"]}
-        raise HTTPException(404, f"unknown zone {zone_id}")
+        board = signboard_view(states.values(), zone_id)
+        if board is None:
+            raise HTTPException(404, f"unknown zone {zone_id}")
+        return board
 
     @app.websocket("/ws")
     async def ws(socket: WebSocket, role: str = "admin") -> None:
