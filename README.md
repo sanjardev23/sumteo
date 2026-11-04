@@ -99,8 +99,3 @@ your Kakao key.
 
 Code: [AGPL-3.0](LICENSE), the same as Ultralytics YOLO, which it uses. Footage, recordings and screenshots keep their
 own licences (see Credits).
-
-## Status
-
-All six plan days are done: tracking, density and levels, flow rules, privacy and evaluation, live alerts and
-dashboards, then replay mode, Docker, the signboard and city data.
