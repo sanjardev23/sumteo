@@ -10,11 +10,11 @@ disaster of failed prevention and response. Sumteo is modelled on the AI crowd m
 > Study project, not a deployed system. Cameras sit at demo positions on the Itaewon map and play stock and research
 > footage. No footage of the 2022 event is used.
 
-| Control room | Alert pop-up | Guard phone view |
+| Control room | Camera card | Guard phone view |
 |---|---|---|
-| ![Control room map with four camera pins](docs/screenshots/control-room.jpg) | ![RED alert pop-up](docs/screenshots/alert-popup.jpg) | ![Guard view with an order](docs/screenshots/guard-view.jpg) |
+| ![Control room map with four camera pins](docs/screenshots/control-room.jpg) | ![Camera card opened from its pin: view, density, people, speed](docs/screenshots/camera-card-exit1.jpg) | ![Guard view with an order](docs/screenshots/guard-view.jpg) |
 
-More: [camera card](docs/screenshots/camera-card-exit1.jpg) · [public signboard](docs/screenshots/signboard-red.jpg) ·
+More: [alert pop-up](docs/screenshots/alert-popup.jpg) · [public signboard](docs/screenshots/signboard-red.jpg) ·
 [landing page](docs/screenshots/landing.jpg)
 
 ## How it works
