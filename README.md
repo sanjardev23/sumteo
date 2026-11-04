@@ -95,6 +95,11 @@ your Kakao key.
   [DM-Count](https://github.com/cvlab-stonybrook/DM-Count), YuNet (OpenCV Zoo).
 - Map tiles © Kakao. Landing-page photo credits: [CREDITS](dashboard/public/landing/CREDITS.md).
 
+## License
+
+Code: [AGPL-3.0](LICENSE), the same as Ultralytics YOLO, which it uses. Footage, recordings and screenshots keep their
+own licences (see Credits).
+
 ## Status
 
 All six plan days are done: tracking, density and levels, flow rules, privacy and evaluation, live alerts and

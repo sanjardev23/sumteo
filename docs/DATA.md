@@ -29,7 +29,7 @@ people (§2.2, `crossing_demo`).
 - **CroHD / MOTChallenge HT21** (Sundararaman et al., CVPR 2021) — research CCTV footage, **CC BY-NC-SA 3.0**:
   non-commercial only, credit required, anything made from it (demo video, screenshots) shares the same licence; some
   sequences come from third-party sources whose terms may also apply. The README and the demo credit CroHD /
-  MOTChallenge. The footage stays in `data/` (git-ignored); the MIT licence covers the code only.
+  MOTChallenge. The footage stays in `data/` (git-ignored); the project's AGPL-3.0 licence covers the code only.
 - Pick 3–5 videos with a **high, fixed camera** (CCTV-like). Handheld/moving cameras break optical flow and calibration.
 - Label for level testing in `data/processed/crowd_levels.csv`: per window, the people **count** in each zone by eye
   (zoomed grid cells of the window's midpoint frame, without looking at the system's output), and the level derived
@@ -146,7 +146,7 @@ Anything shown from this camera must say it runs on demo thresholds — the over
 >   prevented it" or "saves lives" as a claim, plus the limit that on dense real CCTV it counts about half the people.
 >   Each photo keeps its licence: CC BY-SA images credited (author, licence, link); the KOGL Type 4 image (출처표시 +
 >   상업적 이용금지 + 변경금지) served byte-identical, shown whole (no crop or overlay), non-commercial, credited.
->   Files in `dashboard/public/landing/` with `CREDITS.md`; the code's MIT licence doesn't cover them.
+>   Files in `dashboard/public/landing/` with `CREDITS.md`; the project's AGPL-3.0 licence doesn't cover them.
 > - demo thresholds keep their DEMO tag, so a demo RED is never presented as a real reading of Itaewon
 > - **camera positions** (user decision, Day 6): one camera at the alley entrance on Itaewon-ro (Exit 1) — on the main
 >   road, **not inside the alley** — and the others on the nearest busy streets. The alley-entrance camera runs a

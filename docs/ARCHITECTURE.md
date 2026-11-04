@@ -697,6 +697,8 @@ location-targeted disaster text messages, KakaoTalk AlimTalk business channel, s
 | Dashboard | Next.js + Tailwind + Recharts |
 | Packaging | Docker + docker-compose |
 
-> **License note:** Ultralytics is AGPL-3.0 — fine for a portfolio/open-source project.
+> **License:** the project's code is **AGPL-3.0** (`LICENSE`; user decision, Day 6: "easiest and free"), the same as
+> Ultralytics, which it uses. Footage, recordings, screenshots and landing photos keep their own licences (DATA.md §2).
+> Ultralytics is AGPL-3.0 — fine for a portfolio/open-source project.
 > For a closed commercial product, buy an Ultralytics license or swap to RT-DETR (Apache-2.0).
 > The detector is behind an interface (`PersonTracker`) so swapping is a one-file change.
