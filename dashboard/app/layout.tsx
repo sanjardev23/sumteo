@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="ko" className={`h-full antialiased ${plex.variable}`}>
-      <body className="min-h-full bg-zinc-950 text-zinc-100">{children}</body>
+      <body className="min-h-full bg-[#F4F6F9] text-[#1B2430]">{children}</body>
     </html>
   );
 }
