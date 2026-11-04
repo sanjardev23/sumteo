@@ -21,32 +21,33 @@ export function DensityChart({ camera, zoneId, live }: { camera: Camera; zoneId:
   const firstLive = live[0]?.t ?? Infinity;
   const points = [...history.filter((p) => p.t < firstLive), ...live];
   const th = zone?.thresholds;
-  if (!th) return <p className="text-sm text-zinc-500">{zoneId}: not calibrated</p>;
+  if (!th) return <p className="text-xs text-[#5B6675]">{zoneId}: not calibrated</p>;
   const top = Math.max(th.red * 1.25, ...points.map((p) => p.density * 1.1));
+  const ink = { grid: "#E3E8EE", axis: "#8A94A3", tipBg: "#fff", tipBorder: "#D5DBE3", line: "#1D4F91" }; // control-wall palette
   return (
-    <div className="h-48 w-full">
+    <div className="h-32 w-full">
       <ResponsiveContainer>
         <LineChart data={points} margin={{ top: 4, right: 8, left: -12, bottom: 0 }}>
           <ReferenceArea y1={0} y2={th.yellow} fill={LEVEL_COLOR.GREEN} fillOpacity={0.12} />
           <ReferenceArea y1={th.yellow} y2={th.orange} fill={LEVEL_COLOR.YELLOW} fillOpacity={0.14} />
           <ReferenceArea y1={th.orange} y2={th.red} fill={LEVEL_COLOR.ORANGE} fillOpacity={0.16} />
           <ReferenceArea y1={th.red} y2={top} fill={LEVEL_COLOR.RED} fillOpacity={0.18} />
-          <CartesianGrid stroke="#27272a" vertical={false} />
+          <CartesianGrid stroke={ink.grid} vertical={false} />
           <XAxis
             dataKey="t"
             type="number"
             domain={["dataMin", "dataMax"]}
             tickFormatter={(t) => new Date(t * 1000).toLocaleTimeString([], { minute: "2-digit", second: "2-digit" })}
-            stroke="#71717a"
+            stroke={ink.axis}
             fontSize={11}
           />
-          <YAxis domain={[0, top]} stroke="#71717a" fontSize={11} tickFormatter={(v) => v.toFixed(1)} />
+          <YAxis domain={[0, top]} stroke={ink.axis} fontSize={11} tickFormatter={(v) => v.toFixed(1)} />
           <Tooltip
-            contentStyle={{ background: "#18181b", border: "1px solid #3f3f46" }}
+            contentStyle={{ background: ink.tipBg, border: `1px solid ${ink.tipBorder}` }}
             labelFormatter={(t) => new Date(Number(t) * 1000).toLocaleTimeString()}
             formatter={(v) => [`${Number(v).toFixed(2)} /m²`, "density"]}
           />
-          <Line type="monotone" dataKey="density" stroke="#fafafa" dot={false} strokeWidth={2} isAnimationActive={false} />
+          <Line type="monotone" dataKey="density" stroke={ink.line} dot={false} strokeWidth={2} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>

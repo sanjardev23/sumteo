@@ -24,6 +24,7 @@ export interface Camera {
   name: string;
   zones: Zone[];
   health: string[];
+  location: { lat: number; lon: number; label: string; clip: string } | null;
   demo: { overridden: boolean; levels: { yellow: number; orange: number; red: number } | null };
 }
 
@@ -53,6 +54,7 @@ export interface MetricRow {
 }
 
 export const streamUrl = (cameraId: string) => `${API}/cameras/${cameraId}/stream`;
+export const frameUrl = (cameraId: string) => `${API}/cameras/${cameraId}/frame.jpg`;
 export const snapshotUrl = (path: string | null) => (path ? `${API}/snapshots/${path.split("/").pop()}` : null);
 
 export async function getEvents(limit = 100): Promise<SumteoEvent[]> {

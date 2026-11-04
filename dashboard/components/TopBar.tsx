@@ -17,7 +17,7 @@ export function TopBar({ role, connected }: { role: Role; connected: boolean }) 
 }
 
 /** After a page reload the browser blocks sound until a click; offer that click. */
-export function SoundGate() {
+export function SoundGate({ light = false }: { light?: boolean }) {
   const audioOn = useSyncExternalStore(noSubscribe, soundReady, () => true);
   const [clicked, setClicked] = useState(false);
   if (audioOn || clicked) return null;
@@ -27,7 +27,11 @@ export function SoundGate() {
         unlockAlerts();
         setClicked(true);
       }}
-      className="w-full bg-amber-500 py-2 text-sm font-semibold text-black"
+      className={
+        light
+          ? "z-20 w-full border-b border-[#F0D9A8] bg-[#FFF6E5] py-1.5 text-[13px] font-medium text-[#7A4B00]"
+          : "w-full bg-amber-500 py-2 text-sm font-semibold text-black"
+      }
     >
       Tap to turn on alert sound and notifications
     </button>

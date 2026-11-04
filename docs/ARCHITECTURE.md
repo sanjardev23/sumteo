@@ -339,8 +339,9 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 - `api/server.py` — FastAPI (`create_app()`, started by `scripts/serve.py --cameras a.yaml b.yaml`)
   | Endpoint | Purpose |
   |---|---|
-  | `GET /cameras` | `[{id, name, health: [problems], demo: {overridden, levels}, zones: [{id, area_m2, level, label, density_ppm2, count, count_source, speed_mps, active: [condition types], thresholds: {yellow, orange, red}}]}]` — zone thresholds include the risk factor; `demo.overridden` = the camera overrides `crowd.levels_ppm2` |
+  | `GET /cameras` | `[{id, name, health: [problems], demo: {overridden, levels}, location: {lat, lon, label, clip} \| null, zones: [{id, area_m2, level, label, density_ppm2, count, count_source, speed_mps, active: [condition types], thresholds: {yellow, orange, red}}]}]` — zone thresholds include the risk factor; `demo.overridden` = the camera overrides `crowd.levels_ppm2` |
   | `GET /cameras/{id}/stream` | MJPEG with overlays (blurred frames), scaled to 960 px wide, 15 fps |
+  | `GET /cameras/{id}/frame.jpg` | the latest processed frame — the same blurred + overlaid JPEG as the stream (960 px wide, ~90–150 KB); `Cache-Control: no-store`; 404 for an unknown camera or before the first frame. Why: browsers allow ~6 connections per host and each MJPEG holds one, so only the camera card and enlarged view stream; thumbnails poll this every 2 s |
   | `GET /events?camera=&severity=` | event history |
   | `GET /events/{id}` | one event |
   | `POST /events/{id}/ack` | body `{role}`; the **first ack wins**; stores `acknowledged_by`, `acknowledged_ts` (wall) |
@@ -351,14 +352,18 @@ Used to *annotate* the alert (never to suppress a CRITICAL alert silently — a 
 
 ### 2.12 Dashboard (`dashboard/`, Next 16, React 19, Tailwind 4, Recharts)
 Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
-- Camera grid with live MJPEG, zone overlays and level labels (color + 관심/주의/경계/심각)
+- Camera grid with live MJPEG, zone overlays and level labels (color + 관심/주의/경계/심각) — Day 5; on `/admin` replaced by
+  the v2 map (below)
 - **Priority pop-up:** when a camera hits ORANGE/RED its feed jumps to a large view at the top with a sound,
   until acknowledged (Seoul control rooms do the same)
 - Two views: **security** (my zones, big alert cards, Acknowledge — works on a phone) and **admin** (all cameras, pop-ups, history)
 - Alert feed (color by severity, "Acknowledge" button, escalation mark), camera-health badges
 - **Pop-ups** (admin modal, security cards) are for WARNING / CRITICAL that arrive live **and** for the open
   (unacknowledged) ones in `hello`, so a reload, a reconnecting phone or a new admin gets every open alert back as a
-  pop-up with sound. Older history only fills the feed; unacked alerts from earlier server runs stay in the feed.
+  pop-up with sound. Older history only fills the feed.
+  - **User decision (Day 5):** "open" = unacknowledged WARNING / CRITICAL **since the server started**. Trade-off: after a
+    server restart, alerts left open from before it are still in the feed but don't pop up or sound — so an operator
+    restarting during an incident must check the feed by hand.
   An ack from either role closes the alert for both.
 - **Sound:** Web Audio beeps, unlocked by the login click, or by a "tap to turn on sound" bar after a reload (browsers
   block audio until the user interacts). **Browser notifications** with `requireInteraction` on CRITICAL.
@@ -368,6 +373,54 @@ Routes: `/` (role pick), `/admin`, `/security`, `/signboard/<zone>`.
   line as the overlay (§2.1) when that camera overrides `crowd.levels_ppm2`
 - **Public signboard page** (extra): full-screen level + short instruction in Korean and English
   (e.g. "Crowded — use exit B →"), the way district signboards guide people away from a jam
+
+**Dashboard v2 — map-first `/admin` (Day 6, user decisions)** — replaces the Day 5 camera grid on `/admin`; `/security`,
+`/signboard` and the role pick are unchanged. The Qalqon-style three-column control wall and the Stitch mockups were
+rejected. References: Seoul's real-time city data map (data.seoul.go.kr/SeoulRtd/map) and floating-panel map dashboards.
+- **Location:** the demo map and the simulated camera positions sit around Itaewon Station (Yongsan-gu). Footage is
+  still stock (Shibuya, Osaka); every camera is labeled "stock clip (<source>), demo position". See DATA.md §2 for the
+  rule on using the location.
+- **Maps:** Kakao Maps JS SDK (user decision; replaced Naver). The JavaScript key from the user's Kakao Developers app
+  goes in `dashboard/.env.local` as `NEXT_PUBLIC_KAKAO_MAP_KEY` — public by design, so it is domain-restricted in Kakao
+  Developers to `localhost:3000`, `127.0.0.1:3000` and later the real domain. The map sits behind one component, so the
+  provider can be swapped in one place.
+  Each camera's position lives in its camera YAML: `location: {lat, lon, label, clip}` (`clip` = the stock source shown on
+  the card).
+- **Layout:** the Kakao map of Itaewon fills the screen (base tiles muted with a CSS filter — Kakao has no map styles);
+  light cards float on top.
+  - **header:** Sumteo 숨터 · Crowd Safety Monitor · Itaewon, Yongsan-gu | live dot, KST clock, EN | 한국어
+  - **left card:** event list, filters All / Open / Critical / Warning, Acknowledge per row, NO RESPONSE mark. Clicking a
+    row moves the map to the camera, opens its card and the event detail (blurred snapshot + all stored details)
+  - **camera pins** (from the YAML `location`): level color + density; a RED pin pulses. First click → card under the
+    pin: blurred live MJPEG, density / people / speed per zone, active rules, clip source, DEMO thresholds line, Enlarge
+    and Acknowledge. Second click → enlarged view
+  - **right card:** small Seoul map with the Itaewon area ringed; KPI tiles (cameras online, open alerts, peak density,
+    people now); camera thumbnails (a still frame every 2 s, click to select); density chart for the last 5 min of the
+    selected or worst camera
+  - **bottom:** level legend (names only — thresholds are per camera and shown on its card) and a one-line ticker with
+    the latest alert + "N cameras online · stock clips at demo positions"
+  - **dropped:** tabs, search, role label, donut charts, alerts-per-hour, separate live camera grid (thumbnails cover it)
+  - **unchanged:** pop-up until acknowledged, sound, escalation, open = since server start (§2.8, above)
+- **Languages:** English first, Korean second (EN | 한국어); one dictionary in `dashboard/lib/i18n.ts`; the choice is
+  remembered per browser. Level labels keep both forms (e.g. 주의 Caution).
+- **Look:** page `#EEF1F4`, white cards, border `#D5DBE3`, text `#1B2430`, accent `#1D4F91`, IBM Plex Sans. Level colors are
+  unchanged (`LEVEL_COLOR`, the same as the video overlay).
+- **Cameras:** four, at the alley entrance on Itaewon-ro and on the nearest busy streets — none inside the alley; the
+  alley-entrance camera runs a real-threshold clip so a demo RED never shows there (user decision, DATA.md §2):
+
+  | Camera | Position (lat, lon) | Label | Thresholds |
+  |---|---|---|---|
+  | test_crowd_03 | 37.53452, 126.99345 | Itaewon-ro at Exit 1 (alley entrance) | real, stays GREEN |
+  | test_crowd_04 | 37.53500, 126.99250 | World Food Street (~90 m west of the alley's north end) | real |
+  | crossing_demo | 37.53436, 126.99625 | Itaewon-ro east | **demo** (0.3 / 0.6 / 0.75) — the demo RED |
+  | crowd_demo | 37.53300, 126.99445 | Bogwang-ro | **demo** (1.0 / 2.0 / 3.0) |
+
+  Roads confirmed by OSM reverse-geocode. Earlier pins were wrong: "Usadan-ro" sat north of Itaewon-ro and the
+  "Bogwang-ro" point was on Usadan-ro; Usadan-ro is dropped, and so is a fifth camera (crowd_01). **Each camera is tested on its own first** (pipeline +
+  levels + alerts) and joins the dashboard only after it passes. Heavy clips may be compressed, downscaled or swapped
+  for lighter stock clips to keep the laptop cool.
+- **Later (after Day 6):** deploy on a bought domain with access limited to selected people — needs its own design
+  (auth in front of the API, dashboard and MJPEG) before it's built.
 
 ### 2.13 City context (extra)
 Seoul's real-time city data (data.seoul.go.kr, free API key) gives a 4-level congestion label for ~120 hotspots,
