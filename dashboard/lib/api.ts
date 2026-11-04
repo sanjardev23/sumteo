@@ -110,6 +110,28 @@ export interface Order {
   by_role: string | null;
 }
 
+/** Seoul real-time city data for the hotspot (§2.13): a wide, slow estimate next to our own levels. */
+export interface CityData {
+  status: "off" | "waiting" | "ok" | "error";
+  area: string;
+  level_ko?: string;
+  level_en?: string;
+  message?: string;
+  people_min?: number | null;
+  people_max?: number | null;
+  measured_at?: string;
+  error?: string | null;
+}
+
+export async function getCity(): Promise<CityData | null> {
+  try {
+    const r = await fetch(`${API}/city`, { cache: "no-store" });
+    return r.ok ? r.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getOrders(): Promise<Order[]> {
   const r = await fetch(`${API}/orders?limit=50`, { cache: "no-store" });
   return r.ok ? r.json() : [];

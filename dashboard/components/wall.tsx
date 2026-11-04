@@ -66,11 +66,22 @@ export function LangSwitch() {
   );
 }
 
-export function LiveDot({ connected, t }: { connected: boolean; t: Dict }) {
+/** Connection state; "Live" only when at least one camera runs live inference — replays never read as live (§2.12). */
+export function LiveDot({ connected, cameras, t }: { connected: boolean; cameras: Camera[]; t: Dict }) {
+  const replays = cameras.filter((c) => c.mode === "replay").length;
+  const lives = cameras.length - replays;
+  const label = !connected
+    ? t.reconnecting
+    : !lives
+      ? `${t.connected} · ${t.replayShort}`
+      : replays
+        ? `${t.live} ${lives} · ${t.replayShort} ${replays}`
+        : t.live;
+  const dot = !connected ? "bg-[#C62828]" : lives ? "bg-[#2E7D32]" : "bg-[#8A94A3]";
   return (
     <span className="flex items-center gap-1.5">
-      <span className={`size-2 rounded-full ${connected ? "bg-[#2E7D32]" : "bg-[#C62828]"}`} />
-      <span className={connected ? "text-[#1B2430]" : "text-[#C62828]"}>{connected ? t.live : t.reconnecting}</span>
+      <span className={`size-2 rounded-full ${dot}`} />
+      <span className={connected ? "text-[#1B2430]" : "text-[#C62828]"}>{label}</span>
     </span>
   );
 }
@@ -202,7 +213,7 @@ export function EventList({
                   {eventText(e, t)}
                   {e.zone_id && <span className="text-[#8A94A3]"> · {e.zone_id}</span>}
                   {noResponse && (
-                    <span className="ml-1.5 rounded bg-[#C62828] px-1 text-[10px] font-semibold text-white">{t.noResponse}</span>
+                    <span className="ml-1.5 inline-block whitespace-nowrap rounded bg-[#C62828] px-1 text-[10px] font-semibold text-white">{t.noResponse}</span>
                   )}
                   {e.replay && (
                     <span className="ml-1.5">
@@ -333,6 +344,14 @@ export function CameraCard({
           </button>
         )}
         <OrderRows orders={orders.slice(0, 2)} t={t} />
+        <div className="flex flex-wrap gap-x-3">
+          {camera.zones.map((z) => (
+            <a key={z.id} href={`/signboard/${z.id}`} target="_blank" rel="noreferrer" className="text-[11px] font-medium text-[#1D4F91] hover:underline">
+              {t.signboard}
+              {camera.zones.length > 1 && ` · ${z.id}`}
+            </a>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -709,7 +728,7 @@ export function BigCamera({
         <div>
           {event && (
             <div className="mb-1 flex items-center gap-2 text-[13px] font-semibold" style={{ color: SEVERITY_COLOR[event.severity] }}>
-              {noResponse && <span className="rounded bg-[#C62828] px-1.5 text-white">{t.noResponse}</span>}
+              {noResponse && <span className="whitespace-nowrap rounded bg-[#C62828] px-1.5 text-white">{t.noResponse}</span>}
               {t.severity[event.severity]} · {eventText(event, t)}
               {more > 0 && <span className="font-normal text-[#5B6675]">+{more} {t.moreWaiting}</span>}
               {more > 0 && onAckAll && openCount > 1 && (

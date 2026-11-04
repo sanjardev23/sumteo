@@ -61,7 +61,7 @@ export default function Security() {
           </div>
         </div>
         <div className="flex items-center gap-3 text-[12px]">
-          <LiveDot connected={live.connected} t={t} />
+          <LiveDot connected={live.connected} cameras={live.cameras} t={t} />
           <span className="hidden sm:inline">
             <Clock />
           </span>

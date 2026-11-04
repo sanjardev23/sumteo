@@ -1,7 +1,7 @@
 "use client";
 // Day 6 — control wall (ARCHITECTURE §2.12 v2), replacing the Day 5 camera grid: the Itaewon map fills the screen,
 // light cards float on it. Pop-up / acknowledge / escalation behave as before (§2.8, §2.12).
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DensityChart } from "@/components/DensityChart";
 import { KakaoMap, type LatLon, type Pin, type Ring } from "@/components/KakaoMap";
 import { SoundGate } from "@/components/TopBar";
@@ -26,8 +26,8 @@ import {
   peakDensity,
   worstLevel,
 } from "@/components/wall";
-import { LEVEL_COLOR, SEVERITY_COLOR, acknowledge, acknowledgeMany, type Camera, type SumteoEvent } from "@/lib/api";
-import { dict, useLang } from "@/lib/i18n";
+import { LEVEL_COLOR, SEVERITY_COLOR, acknowledge, acknowledgeMany, getCity, type Camera, type CityData, type SumteoEvent } from "@/lib/api";
+import { dict, useLang, type Dict } from "@/lib/i18n";
 import { useLive } from "@/lib/useLive";
 
 // The middle of the four demo cameras; one zoom step out, so every pin stays on screen with a camera card open.
@@ -37,7 +37,8 @@ const HOTSPOT: Ring[] = [{ ...ITAEWON, radius: 700, color: "#C62828" }];
 
 export default function Admin() {
   const live = useLive("admin");
-  const t = dict[useLang()];
+  const lang = useLang();
+  const t = dict[lang];
   // undefined = nothing chosen yet: the main camera's card is open on load (§2.12); null = closed by the user.
   const [chosen, setChosen] = useState<string | null | undefined>(undefined);
   const [orderFor, setOrderFor] = useState<{ camera: Camera; event?: SumteoEvent } | null>(null);
@@ -111,7 +112,7 @@ export default function Admin() {
           </span>
         </div>
         <div className="flex items-center gap-5 text-[13px]">
-          <LiveDot connected={live.connected} t={t} />
+          <LiveDot connected={live.connected} cameras={live.cameras} t={t} />
           <Clock />
           <LangSwitch />
         </div>
@@ -164,6 +165,7 @@ export default function Admin() {
               interactive={false}
             />
             <p className="mt-1.5 text-[11px] text-[#5B6675]">{t.hotspot}</p>
+            <CityPanel t={t} ko={lang === "ko"} />
           </div>
           <Kpis cameras={live.cameras} openAlerts={live.popups.length} t={t} />
           <CameraThumbs cameras={camerasMainFirst} selected={selected} t={t} onPick={showCamera} />
@@ -254,4 +256,39 @@ export default function Admin() {
 
 function worstCamera(cameras: Camera[]): Camera | undefined {
   return [...cameras].sort((a, b) => (peakDensity(b) ?? -1) - (peakDensity(a) ?? -1))[0];
+}
+
+const CITY_POLL_MS = 60_000; // the city data itself changes every 5 min
+
+/** Seoul's own congestion label for the whole hotspot (§2.13), next to our cameras: wide and slow, never an alert. */
+function CityPanel({ t, ko }: { t: Dict; ko: boolean }) {
+  const [city, setCity] = useState<CityData | null>(null);
+  useEffect(() => {
+    const load = () => getCity().then(setCity);
+    load();
+    const id = setInterval(load, CITY_POLL_MS);
+    return () => clearInterval(id);
+  }, []);
+  if (!city) return null;
+  if (city.status !== "ok")
+    return (
+      <p className="mt-2 rounded bg-[#F5F7FA] px-2 py-1.5 text-[11px] text-[#5B6675]">
+        {city.status === "off" ? t.cityOff : city.error ? `${t.cityTitle}: ${city.error}` : t.cityWaiting}
+      </p>
+    );
+  return (
+    <div className="mt-2 rounded border border-[#E3E8EE] px-2 py-1.5" title={city.message}>
+      <div className="flex items-baseline justify-between gap-2 text-[11px] text-[#5B6675]">
+        <span>{t.cityTitle}</span>
+        <span className="tabular-nums">{city.measured_at?.slice(11)}</span>
+      </div>
+      <div className="text-[13px] font-semibold">
+        {city.area} · {ko ? city.level_ko : city.level_en}
+      </div>
+      {city.people_min != null && city.people_max != null && (
+        <div className="text-[11px] tabular-nums">{t.cityPeople(city.people_min, city.people_max)}</div>
+      )}
+      <p className="mt-0.5 text-[10px] leading-snug text-[#8A94A3]">{t.cityNote}</p>
+    </div>
+  );
 }
